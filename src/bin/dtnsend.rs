@@ -6,7 +6,6 @@ use hardy_bpa::bpa::BpaRegistration;
 use hardy_bpv7::builder::Builder;
 use hardy_bpv7::creation_timestamp::CreationTimestamp;
 use hardy_bpv7::eid::{DtnNodeId, Eid};
-use hardy_proto::client::RemoteBpa;
 use std::io::{self, Read};
 use std::sync::Arc;
 
@@ -57,6 +56,14 @@ struct Args {
     /// Security Source EID for BPSec BIB (defaults to bundle source EID)
     #[clap(long = "security-source")]
     security_source: Option<String>,
+
+    /// Optional Bearer authentication token for protected gRPC BPA endpoints
+    #[clap(long, env = "DTN_HDY_TOKEN")]
+    token: Option<String>,
+
+    /// Optional Unix Domain Socket path for connecting to a protected local BPA
+    #[clap(long, env = "DTN_HDY_SOCKET")]
+    socket: Option<String>,
 }
 
 #[tokio::main]
@@ -133,7 +140,11 @@ async fn main() -> anyhow::Result<()> {
             eprintln!("Connecting to Hardy BPA at {}", grpc_addr);
         }
 
-        let remote_bpa = RemoteBpa::new(grpc_addr);
+        let (remote_bpa, _grpc_guard) = dtnpm_core::create_remote_bpa(
+            &grpc_addr,
+            args.token.as_deref(),
+            args.socket.as_deref(),
+        )?;
         let sender_cla = Arc::new(NoopSenderCla::default());
 
         // Register dynamically as a CLA with a unique name to avoid collisions

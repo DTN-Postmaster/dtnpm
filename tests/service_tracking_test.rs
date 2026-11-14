@@ -67,6 +67,7 @@ async fn test_active_services_tracking_and_grpc_lifecycle() {
         grpc: dtnpm::config::GrpcConfig {
             enabled: true,
             address: "127.0.0.1:54321".parse().unwrap(),
+            ..Default::default()
         },
         web: Some(dtnpm::config::WebConfig {
             address: "127.0.0.1:8888".parse().unwrap(),
@@ -182,6 +183,7 @@ async fn test_log_buffer_endpoint_and_sse_events() {
         grpc: dtnpm::config::GrpcConfig {
             enabled: true,
             address: "127.0.0.1:54322".parse().unwrap(),
+            ..Default::default()
         },
         web: Some(dtnpm::config::WebConfig {
             address: "127.0.0.1:8889".parse().unwrap(),

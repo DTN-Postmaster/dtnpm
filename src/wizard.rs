@@ -5,7 +5,16 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, anyhow};
 
+use dtnpm_core::InternalStorage;
 use dtnpm_core::config::HamConfig;
+
+/// Authentication choice collected during the configuration wizard.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum WizardAuth {
+    None,
+    Local,
+    Proxy { trusted_cidr: String },
+}
 
 /// Expands leading `~` to the user's home directory.
 pub fn expand_tilde(path: &Path) -> PathBuf {
@@ -81,6 +90,32 @@ pub fn generate_wizard_config(
     tcpcl_listen_port: u16,
     format: ConfigFormat,
 ) -> String {
+    generate_wizard_config_with_auth(
+        callsign,
+        node_id,
+        data_dir,
+        grpc_port,
+        web_address,
+        connect_f4jxq,
+        tcpcl_listen_port,
+        format,
+        &WizardAuth::None,
+    )
+}
+
+/// Generates configuration file content including `[auth]` configuration.
+#[allow(clippy::too_many_arguments)]
+pub fn generate_wizard_config_with_auth(
+    callsign: &str,
+    node_id: &str,
+    data_dir: &Path,
+    grpc_port: u16,
+    web_address: &str,
+    connect_f4jxq: bool,
+    tcpcl_listen_port: u16,
+    format: ConfigFormat,
+    auth: &WizardAuth,
+) -> String {
     let escape_str = |s: &str| -> String { s.replace('\\', "\\\\").replace('"', "\\\"") };
     let escaped_callsign = escape_str(callsign);
     let escaped_node_id = escape_str(node_id);
@@ -89,6 +124,21 @@ pub fn generate_wizard_config(
 
     match format {
         ConfigFormat::Toml => {
+            let auth_block = match auth {
+                WizardAuth::None => "[auth]\nmode = \"none\"".to_string(),
+                WizardAuth::Local => "[auth]\nmode = \"local\"\nsession-ttl = \"7d\"".to_string(),
+                WizardAuth::Proxy { trusted_cidr } => format!(
+                    r#"[auth]
+mode = "proxy"
+
+[auth.proxy]
+trusted-proxies = ["{}"]
+user-header = "Remote-User"
+email-header = "Remote-Email"
+role-header = "X-DTN-Role""#,
+                    escape_str(trusted_cidr)
+                ),
+            };
             let clas_and_routes = if connect_f4jxq {
                 format!(
                     r#"[[clas]]
@@ -133,6 +183,8 @@ address = "127.0.0.1:{grpc_port}"
 [web]
 address = "{escaped_web_address}"
 
+{auth_block}
+
 [rfc9171-validity]
 primary-block-integrity = false
 bundle-age-required = false
@@ -142,6 +194,21 @@ bundle-age-required = false
             )
         }
         ConfigFormat::Yaml => {
+            let auth_yaml = match auth {
+                WizardAuth::None => "auth:\n  mode: \"none\"".to_string(),
+                WizardAuth::Local => "auth:\n  mode: \"local\"\n  session-ttl: \"7d\"".to_string(),
+                WizardAuth::Proxy { trusted_cidr } => format!(
+                    r#"auth:
+  mode: "proxy"
+  proxy:
+    trusted-proxies:
+      - "{}"
+    user-header: "Remote-User"
+    email-header: "Remote-Email"
+    role-header: "X-DTN-Role""#,
+                    escape_str(trusted_cidr)
+                ),
+            };
             let (clas_yaml, routes_yaml) = if connect_f4jxq {
                 (
                     format!(
@@ -185,6 +252,8 @@ grpc:
 
 web:
   address: "{escaped_web_address}"
+
+{auth_yaml}
 
 rfc9171-validity:
   primary-block-integrity: false
@@ -395,12 +464,83 @@ pub fn run_wizard<R: BufRead, W: Write>(
         expand_tilde(Path::new(trimmed_save))
     };
 
+    // 6. Optional WebUI Authentication Mode
+    writeln!(writer, "\n6. Web Authentication & Security:")?;
+    write!(
+        writer,
+        "   Auth mode (none, local, proxy) [Default: none]: "
+    )?;
+    writer.flush()?;
+    let mut auth_line = String::new();
+    let auth_bytes = reader.read_line(&mut auth_line)?;
+    let wizard_auth = if auth_bytes == 0 {
+        WizardAuth::None
+    } else {
+        match auth_line.trim().to_ascii_lowercase().as_str() {
+            "local" => {
+                let default_admin = callsign.to_ascii_lowercase();
+                write!(
+                    writer,
+                    "   Initial Admin username [Default: {default_admin}]: "
+                )?;
+                writer.flush()?;
+                let mut user_line = String::new();
+                let _ = reader.read_line(&mut user_line)?;
+                let admin_user = if user_line.trim().is_empty() {
+                    default_admin
+                } else {
+                    user_line.trim().to_string()
+                };
+
+                write!(
+                    writer,
+                    "   Initial Admin password (leave empty to skip creating now): "
+                )?;
+                writer.flush()?;
+                let mut pw_line = String::new();
+                let _ = reader.read_line(&mut pw_line)?;
+                let admin_pw = pw_line.trim_end_matches(&['\r', '\n'][..]);
+                if !admin_pw.is_empty() {
+                    std::fs::create_dir_all(&data_dir).with_context(|| {
+                        format!("Failed to create storage directory {}", data_dir.display())
+                    })?;
+                    let storage = InternalStorage::new_disk_with_quota(
+                        &data_dir,
+                        HamConfig::default().application.quota.max_storage,
+                    )?;
+                    storage.upsert_iam_user(&admin_user, admin_pw, "Admin")?;
+                    writeln!(
+                        writer,
+                        "   ✓ Created local Admin user '{admin_user}' in SQLite database."
+                    )?;
+                }
+                WizardAuth::Local
+            }
+            "proxy" => {
+                write!(
+                    writer,
+                    "   Trusted reverse-proxy CIDR [Default: 127.0.0.1/32]: "
+                )?;
+                writer.flush()?;
+                let mut cidr_line = String::new();
+                let _ = reader.read_line(&mut cidr_line)?;
+                let trusted_cidr = if cidr_line.trim().is_empty() {
+                    "127.0.0.1/32".to_string()
+                } else {
+                    cidr_line.trim().to_string()
+                };
+                WizardAuth::Proxy { trusted_cidr }
+            }
+            _ => WizardAuth::None,
+        }
+    };
+
     let node_id = format!("dtn://{}/", callsign.to_lowercase());
     let tcpcl_listen_port = find_available_port(4556, "0.0.0.0");
     let grpc_port = find_available_port(50051, "127.0.0.1");
 
     let format = ConfigFormat::from_path(&save_path);
-    let config_content = generate_wizard_config(
+    let config_content = generate_wizard_config_with_auth(
         &callsign,
         &node_id,
         &data_dir,
@@ -409,6 +549,7 @@ pub fn run_wizard<R: BufRead, W: Write>(
         connect_f4jxq,
         tcpcl_listen_port,
         format,
+        &wizard_auth,
     );
 
     if let Some(parent) = save_path.parent() {
@@ -646,5 +787,32 @@ mod tests {
         let mut output = Vec::new();
         let res = run_wizard(&mut reader, &mut output, None);
         assert!(res.is_err());
+    }
+
+    #[test]
+    fn test_wizard_local_auth_creates_admin_user() {
+        let dir = tempdir().unwrap();
+        let save_target = dir.path().join("station_local.toml");
+        let custom_dir = dir.path().join("data");
+
+        let input = format!(
+            "F4IAM\nn\n{}\n127.0.0.1:8088\n{}\nlocal\nf4iam\nStrongPass42!\n",
+            custom_dir.display(),
+            save_target.display()
+        );
+        let mut reader = std::io::Cursor::new(input);
+        let mut output = Vec::new();
+
+        let cfg = run_wizard(&mut reader, &mut output, None).unwrap();
+        assert_eq!(cfg.auth.mode, dtnpm_core::config::AuthMode::Local);
+
+        let storage =
+            InternalStorage::new_disk_with_quota(&custom_dir, cfg.application.quota.max_storage)
+                .unwrap();
+        let verified = storage
+            .verify_iam_user_password("f4iam", "StrongPass42!")
+            .unwrap()
+            .expect("admin user should verify");
+        assert_eq!(verified.role, "Admin");
     }
 }

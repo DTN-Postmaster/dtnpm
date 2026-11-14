@@ -8,7 +8,6 @@ use hardy_bpa::services::{Service as BpaService, ServiceSink, StatusNotify};
 use hardy_bpv7::builder::Builder;
 use hardy_bpv7::creation_timestamp::CreationTimestamp;
 use hardy_bpv7::eid::{Eid, Service};
-use hardy_proto::client::RemoteBpa;
 use rusqlite::Connection;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -58,6 +57,14 @@ struct Args {
     /// Display current stats from the database and exit
     #[arg(short = 'S', long)]
     show: bool,
+
+    /// Optional Bearer authentication token for protected gRPC BPA endpoints
+    #[arg(long, env = "DTN_HDY_TOKEN")]
+    token: Option<String>,
+
+    /// Optional Unix Domain Socket path for connecting to a protected local BPA
+    #[arg(long, env = "DTN_HDY_SOCKET")]
+    socket: Option<String>,
 }
 
 // Database helper
@@ -601,7 +608,8 @@ async fn main() -> Result<()> {
         eprintln!("Connecting to Hardy BPA at {}", grpc_addr);
     }
 
-    let remote_bpa = RemoteBpa::new(grpc_addr);
+    let (remote_bpa, _grpc_guard) =
+        dtnpm_core::create_remote_bpa(&grpc_addr, args.token.as_deref(), args.socket.as_deref())?;
     let app = Arc::new(StatsApp {
         db: db.clone(),
         sink: OnceCell::new(),

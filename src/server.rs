@@ -448,7 +448,7 @@ impl HamServer {
 
         let bpa = Arc::new(builder.build().await.map_err(anyhow::Error::from_boxed)?);
 
-        let grpc_config = if config.grpc.enabled {
+        let grpc_config = if config.grpc.enabled || config.grpc.auth.socket_path.is_some() {
             Some(hardy_proto::server::Config {
                 address: config.grpc.address,
                 services: vec![
@@ -642,18 +642,88 @@ impl HamServer {
         }
 
         if let Some(ref grpc_config) = self.grpc_config {
-            let server = GrpcServer::new(grpc_config, Arc::new(self.service_tracker.clone()))
-                .map_err(|e| anyhow::anyhow!("Failed to create gRPC server: {e}"))?;
-            let cancel = self.tasks.cancel_token().clone();
-            hardy_async::spawn!(self.tasks, "grpc_server", async move {
-                if let Err(e) = server.serve(cancel).await {
-                    tracing::error!("gRPC server failed: {e}");
+            let auth_cfg = &self.config.grpc.auth;
+            if auth_cfg.enabled || auth_cfg.socket_path.is_some() {
+                let use_ephemeral_internal = auth_cfg.enabled || !self.config.grpc.enabled;
+                let (internal_addr, upstream_for_gateway) = if use_ephemeral_internal {
+                    let ephemeral = std::net::TcpListener::bind("127.0.0.1:0")?;
+                    let addr = ephemeral.local_addr()?;
+                    drop(ephemeral);
+                    (addr, addr)
+                } else {
+                    let addr = grpc_config.address;
+                    let upstream = if addr.ip().is_unspecified() {
+                        SocketAddr::from(([127, 0, 0, 1], addr.port()))
+                    } else {
+                        addr
+                    };
+                    (addr, upstream)
+                };
+
+                let internal_cfg = hardy_proto::server::Config {
+                    address: internal_addr,
+                    services: grpc_config.services.clone(),
+                };
+                let server = GrpcServer::new(&internal_cfg, Arc::new(self.service_tracker.clone()))
+                    .map_err(|e| anyhow::anyhow!("Failed to create gRPC server: {e}"))?;
+                let cancel = self.tasks.cancel_token().clone();
+                hardy_async::spawn!(self.tasks, "grpc_server", async move {
+                    if let Err(e) = server.serve(cancel).await {
+                        tracing::error!("gRPC server failed: {e}");
+                    }
+                });
+
+                for _ in 0..50 {
+                    if tokio::net::TcpStream::connect(upstream_for_gateway)
+                        .await
+                        .is_ok()
+                    {
+                        break;
+                    }
+                    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
                 }
-            });
-            info!(
-                "gRPC application service listening on {}",
-                grpc_config.address
-            );
+
+                let policy_engine = Arc::new(dtnpm_core::iam::PolicyEngine::load(
+                    self.config.auth.policy_path.as_deref(),
+                )?);
+                let active_sock = dtnpm_core::iam::grpc_guard::GrpcSecurityGateway::start(
+                    grpc_config.address,
+                    upstream_for_gateway,
+                    auth_cfg.clone(),
+                    self.config.callsign.clone(),
+                    policy_engine,
+                    Some(self.internal_storage.clone()),
+                    self.tasks.cancel_token().clone(),
+                )
+                .await?;
+                if auth_cfg.enabled {
+                    info!(
+                        "gRPC authenticated TCP gateway listening on {}",
+                        grpc_config.address
+                    );
+                } else if self.config.grpc.enabled {
+                    info!(
+                        "gRPC application service listening on {}",
+                        grpc_config.address
+                    );
+                }
+                if let Some(sock) = active_sock {
+                    info!("gRPC Unix Domain Socket listening on {}", sock.display());
+                }
+            } else {
+                let server = GrpcServer::new(grpc_config, Arc::new(self.service_tracker.clone()))
+                    .map_err(|e| anyhow::anyhow!("Failed to create gRPC server: {e}"))?;
+                let cancel = self.tasks.cancel_token().clone();
+                hardy_async::spawn!(self.tasks, "grpc_server", async move {
+                    if let Err(e) = server.serve(cancel).await {
+                        tracing::error!("gRPC server failed: {e}");
+                    }
+                });
+                info!(
+                    "gRPC application service listening on {}",
+                    grpc_config.address
+                );
+            }
         }
 
         #[cfg(feature = "web-core")]

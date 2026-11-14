@@ -10,7 +10,6 @@ use hardy_bpv7::{
     builder::Builder,
     eid::{Eid, Service},
 };
-use hardy_proto::client::RemoteBpa;
 use std::sync::Arc;
 use tokio::sync::OnceCell;
 
@@ -70,6 +69,14 @@ struct Args {
     /// Use IPv6 address for local connection
     #[arg(short = '6', long)]
     ipv6: bool,
+
+    /// Optional Bearer authentication token for protected gRPC BPA endpoints
+    #[arg(long, env = "DTN_HDY_TOKEN")]
+    token: Option<String>,
+
+    /// Optional Unix Domain Socket path for connecting to a protected local BPA
+    #[arg(long, env = "DTN_HDY_SOCKET")]
+    socket: Option<String>,
 }
 
 struct BibService {
@@ -455,7 +462,8 @@ async fn main() -> anyhow::Result<()> {
         eprintln!("Connecting to Hardy BPA at {}", grpc_addr);
     }
 
-    let remote_bpa = RemoteBpa::new(grpc_addr.clone());
+    let (remote_bpa, _grpc_guard) =
+        dtnpm_core::create_remote_bpa(&grpc_addr, args.token.as_deref(), args.socket.as_deref())?;
     let sender_cla = Arc::new(NoopSenderCla::default());
 
     // Register dynamically as a CLA with a retry loop to withstand transient BPA restarts

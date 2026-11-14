@@ -1,8 +1,9 @@
 //! CLI binary entry point for `dtnpm`.
 
 use clap::{Parser, Subcommand};
-use dtnpm::{HamConfig, LogBuffer, LogBufferLayer};
-use std::path::PathBuf;
+use dtnpm::{HamConfig, InternalStorage, LogBuffer, LogBufferLayer};
+use std::io::Write;
+use std::path::{Path, PathBuf};
 use tracing::info;
 use tracing_subscriber::EnvFilter;
 
@@ -31,6 +32,14 @@ struct Cli {
     #[arg(long, value_name = "GRPC_URL")]
     remote_bpa: Option<String>,
 
+    /// Bearer token for authenticating to a remote gRPC BPA node
+    #[arg(long, env = "DTN_HDY_TOKEN")]
+    token: Option<String>,
+
+    /// Unix Domain Socket path for connecting to a protected local gRPC BPA node
+    #[arg(long, env = "DTN_HDY_SOCKET")]
+    socket: Option<String>,
+
     /// Increase verbosity level (-v: debug, -vv: trace)
     #[arg(short = 'v', long = "verbose", action = clap::ArgAction::Count)]
     verbose: u8,
@@ -52,6 +61,80 @@ enum Commands {
         /// Optional path where to save the configuration file
         #[arg(short, long)]
         output: Option<PathBuf>,
+    },
+    /// Manage local WebUI operator/administrator accounts (Argon2id)
+    User {
+        #[command(subcommand)]
+        action: UserCommands,
+    },
+    /// Manage gRPC / WebUI Bearer API tokens
+    Token {
+        #[command(subcommand)]
+        action: TokenCommands,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum UserCommands {
+    /// Create or update an operator/administrator account
+    Add {
+        /// Username (typically callsign, e.g. f4abc)
+        username: String,
+        /// Assigned role (Admin or Operator)
+        #[arg(long, default_value = "Operator")]
+        role: String,
+        /// Plaintext password (if omitted, reads one line from stdin)
+        #[arg(long)]
+        password: Option<String>,
+        /// Optional storage directory override
+        #[arg(long)]
+        data_dir: Option<PathBuf>,
+    },
+    /// Change the password of an existing local user
+    Passwd {
+        /// Username
+        username: String,
+        /// New password (if omitted, reads one line from stdin)
+        #[arg(long)]
+        password: Option<String>,
+        /// Optional storage directory override
+        #[arg(long)]
+        data_dir: Option<PathBuf>,
+    },
+    /// List configured local IAM accounts
+    List {
+        /// Optional storage directory override
+        #[arg(long)]
+        data_dir: Option<PathBuf>,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum TokenCommands {
+    /// Issue a new persistent Bearer API token (prints raw secret once)
+    Add {
+        /// Human-readable description (e.g. ltp-kiss-cla)
+        name: String,
+        /// Assigned role (Admin or Operator)
+        #[arg(long, default_value = "Admin")]
+        role: String,
+        /// Optional storage directory override
+        #[arg(long)]
+        data_dir: Option<PathBuf>,
+    },
+    /// List active API tokens (metadata only; secrets are hashed at rest)
+    List {
+        /// Optional storage directory override
+        #[arg(long)]
+        data_dir: Option<PathBuf>,
+    },
+    /// Revoke an API token by its ID or name
+    Revoke {
+        /// Token ID or description/name
+        id_or_name: String,
+        /// Optional storage directory override
+        #[arg(long)]
+        data_dir: Option<PathBuf>,
     },
 }
 
@@ -109,7 +192,12 @@ rfc9171-validity:
 
 #[cfg(feature = "web-core")]
 #[allow(clippy::vec_init_then_push)]
-async fn run_remote_webui(config: HamConfig, grpc_url: String) -> anyhow::Result<()> {
+async fn run_remote_webui(
+    config: HamConfig,
+    grpc_url: String,
+    token: Option<String>,
+    socket: Option<String>,
+) -> anyhow::Result<()> {
     use dtnpm_core::{
         BpaClient, GrpcBpaClient, InternalStorage, ServiceTracker, cla_manager::ClaManager,
         routing::RouteManager, security::DirectionalKeyStore,
@@ -124,7 +212,7 @@ async fn run_remote_webui(config: HamConfig, grpc_url: String) -> anyhow::Result
         .web
         .as_ref()
         .map(|w| w.address)
-        .unwrap_or_else(|| "127.0.0.1:8080".parse().expect("valid default socket addr"));
+        .unwrap_or_else(|| std::net::SocketAddr::from(([127, 0, 0, 1], 8080)));
 
     let internal_storage = if config.storage.in_memory {
         InternalStorage::new_in_memory_with_quota(config.application.quota.max_storage)?
@@ -134,7 +222,11 @@ async fn run_remote_webui(config: HamConfig, grpc_url: String) -> anyhow::Result
         InternalStorage::new_disk_with_quota(&data_dir, config.application.quota.max_storage)?
     };
 
-    let grpc_bpa = Arc::new(GrpcBpaClient::new(grpc_url));
+    let grpc_bpa = Arc::new(GrpcBpaClient::with_auth(
+        grpc_url,
+        token.as_deref(),
+        socket.as_deref(),
+    ));
     let bpa_reg: Arc<dyn BpaRegistration> = grpc_bpa.clone().as_registration();
     let bpa: Arc<dyn BpaClient> = grpc_bpa;
     let service_tracker = ServiceTracker::new(bpa_reg.clone());
@@ -222,6 +314,14 @@ async fn main() -> anyhow::Result<()> {
         return Ok(());
     }
 
+    if let Some(Commands::User { action }) = cli.command {
+        return handle_user_command(cli.config.as_deref(), action);
+    }
+
+    if let Some(Commands::Token { action }) = cli.command {
+        return handle_token_command(cli.config.as_deref(), action);
+    }
+
     let mut config = if let Some(config_file) = HamConfig::find_config(cli.config.as_deref()) {
         HamConfig::load(Some(&config_file))?
     } else {
@@ -237,7 +337,7 @@ async fn main() -> anyhow::Result<()> {
 
     #[cfg(feature = "web-core")]
     if let Some(grpc_url) = cli.remote_bpa {
-        return run_remote_webui(config, grpc_url).await;
+        return run_remote_webui(config, grpc_url, cli.token, cli.socket).await;
     }
 
     #[cfg(feature = "node")]
@@ -255,11 +355,128 @@ async fn main() -> anyhow::Result<()> {
     {
         let grpc_addr = config.grpc.address.to_string();
         let grpc_url = format!("http://{grpc_addr}");
-        return run_remote_webui(config, grpc_url).await;
+        return run_remote_webui(config, grpc_url, cli.token, cli.socket).await;
     }
 
     #[cfg(all(not(feature = "node"), not(feature = "web-core")))]
     {
         anyhow::bail!("Binary built without 'node' or 'web-core' features enabled");
     }
+}
+
+fn open_iam_storage(
+    config_path: Option<&Path>,
+    data_dir_override: Option<&Path>,
+) -> anyhow::Result<InternalStorage> {
+    let config = if let Some(found) = HamConfig::find_config(config_path) {
+        HamConfig::load(Some(&found))?
+    } else {
+        HamConfig::default()
+    };
+    let dir = match data_dir_override {
+        Some(p) => p.to_path_buf(),
+        None => config.storage.effective_data_dir(),
+    };
+    std::fs::create_dir_all(&dir)?;
+    InternalStorage::new_disk_with_quota(&dir, config.application.quota.max_storage)
+}
+
+fn read_password_arg(explicit: Option<String>, prompt: &str) -> anyhow::Result<String> {
+    if let Some(pw) = explicit {
+        if pw.is_empty() {
+            anyhow::bail!("Password cannot be empty");
+        }
+        return Ok(pw);
+    }
+    eprint!("{prompt}");
+    std::io::stderr().flush()?;
+    let mut line = String::new();
+    std::io::stdin().read_line(&mut line)?;
+    let trimmed = line.trim_end_matches(&['\r', '\n'][..]).to_string();
+    if trimmed.is_empty() {
+        anyhow::bail!("Password cannot be empty (pass --password or pipe via stdin)");
+    }
+    Ok(trimmed)
+}
+
+fn handle_user_command(config_path: Option<&Path>, action: UserCommands) -> anyhow::Result<()> {
+    match action {
+        UserCommands::Add {
+            username,
+            role,
+            password,
+            data_dir,
+        } => {
+            let storage = open_iam_storage(config_path, data_dir.as_deref())?;
+            let pw = read_password_arg(password, &format!("Password for user '{username}': "))?;
+            let rec = storage.upsert_iam_user(&username, &pw, &role)?;
+            println!("User '{}' saved with role '{}'", rec.username, rec.role);
+        }
+        UserCommands::Passwd {
+            username,
+            password,
+            data_dir,
+        } => {
+            let storage = open_iam_storage(config_path, data_dir.as_deref())?;
+            let pw = read_password_arg(password, &format!("New password for user '{username}': "))?;
+            if storage.update_iam_user_password(&username, &pw)? {
+                println!("Password updated for user '{username}'");
+            } else {
+                anyhow::bail!("User '{username}' not found");
+            }
+        }
+        UserCommands::List { data_dir } => {
+            let storage = open_iam_storage(config_path, data_dir.as_deref())?;
+            let users = storage.list_iam_users()?;
+            if users.is_empty() {
+                println!("No local IAM users registered.");
+            } else {
+                for u in users {
+                    println!("{}\t{}", u.username, u.role);
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+fn handle_token_command(config_path: Option<&Path>, action: TokenCommands) -> anyhow::Result<()> {
+    match action {
+        TokenCommands::Add {
+            name,
+            role,
+            data_dir,
+        } => {
+            let storage = open_iam_storage(config_path, data_dir.as_deref())?;
+            let (raw_secret, rec) = storage.create_iam_api_token(&name, &role)?;
+            println!(
+                "Created API token id='{}' name='{}' role='{}'",
+                rec.id, rec.name, rec.role
+            );
+            println!("Token (save now — never shown again): {raw_secret}");
+        }
+        TokenCommands::List { data_dir } => {
+            let storage = open_iam_storage(config_path, data_dir.as_deref())?;
+            let tokens = storage.list_iam_api_tokens()?;
+            if tokens.is_empty() {
+                println!("No API tokens registered.");
+            } else {
+                for t in tokens {
+                    println!("{}\t{}\t{}", t.id, t.name, t.role);
+                }
+            }
+        }
+        TokenCommands::Revoke {
+            id_or_name,
+            data_dir,
+        } => {
+            let storage = open_iam_storage(config_path, data_dir.as_deref())?;
+            if storage.revoke_iam_api_token(&id_or_name)? {
+                println!("Revoked token '{id_or_name}'");
+            } else {
+                anyhow::bail!("Token '{id_or_name}' not found");
+            }
+        }
+    }
+    Ok(())
 }

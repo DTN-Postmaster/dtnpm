@@ -5,7 +5,6 @@ use hardy_bpa::async_trait;
 use hardy_bpa::bpa::BpaRegistration;
 use hardy_bpa::services::{Service as BpaService, ServiceSink};
 use hardy_bpv7::eid::{Eid, Service};
-use hardy_proto::client::RemoteBpa;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::OnceCell;
@@ -58,6 +57,14 @@ struct Args {
     /// Save bundle metadata as JSON alongside the payload (filename: <bundle-id>-metadata.json)
     #[arg(short = 'm', long = "metadata")]
     metadata: bool,
+
+    /// Optional Bearer authentication token for protected gRPC BPA endpoints
+    #[arg(long, env = "DTN_HDY_TOKEN")]
+    token: Option<String>,
+
+    /// Optional Unix Domain Socket path for connecting to a protected local BPA
+    #[arg(long, env = "DTN_HDY_SOCKET")]
+    socket: Option<String>,
 }
 
 struct FilesService {
@@ -443,7 +450,8 @@ async fn main() -> anyhow::Result<()> {
         std::fs::create_dir_all(&args.dir)?;
     }
 
-    let remote_bpa = RemoteBpa::new(grpc_addr);
+    let (remote_bpa, _grpc_guard) =
+        dtnpm_core::create_remote_bpa(&grpc_addr, args.token.as_deref(), args.socket.as_deref())?;
     let service = Arc::new(FilesService {
         sink: OnceCell::new(),
         verbose: args.verbose,

@@ -1,0 +1,58 @@
+# DTN Postmaster (dtnpm) IAM & Reverse Proxy Configuration Example (YunoHost / SSOwat)
+#
+# Use together with `examples/yunohost-nginx-ssowat.conf`.
+
+callsign = "F4JXQ"
+node-id = "dtn://f4jxq/"
+
+[storage]
+in-memory = false
+data-dir = "/var/lib/dtnpm"
+
+[grpc]
+enabled = true
+address = "127.0.0.1:50051"
+
+# Protect local and remote gRPC endpoints with Bearer tokens and/or Unix Domain Socket
+[grpc.auth]
+enabled = true
+socket-path = "/run/dtnpm/grpc.sock"
+# Optional Unix socket group / octal mode:
+# socket-group = "dtnpm"
+# socket-mode = "0660"
+
+# Service tokens for standalone CLAs or remote bots (store high-entropy tokens securely,
+# or generate persistent DB tokens via: `dtnpm token add ltp-kiss --role Admin`)
+# [[grpc.auth.tokens]]
+# name = "ltp-kiss-daemon"
+# token = "replace-with-32-byte-random-secret"
+# role = "Admin"
+
+[web]
+address = "127.0.0.1:8088"
+
+# WebUI Authentication & Policy-Based Access Control (PBAC)
+[auth]
+# Modes: "none" (default standalone), "local" (SQLite Argon2id + HttpOnly cookies), "proxy" (SSOwat/Nginx)
+mode = "proxy"
+session-ttl = "7d"
+# Optional custom Rego policy override (defaults to compiled-in HAM RBAC policy)
+# policy-path = "/etc/dtnpm/policy.rego"
+
+[auth.proxy]
+# Strictly reject proxy identity headers from any IP outside this list (anti-spoofing)
+trusted-proxies = ["127.0.0.1/32", "::1/128"]
+user-header = "Remote-User"
+email-header = "Remote-Email"
+role-header = "X-DTN-Role"
+admin-users = ["admin", "f4jxq"]
+default-role = "Operator"
+# Fallback SSO email-prefix -> callsign mapping if SSOwat username != callsign
+# [auth.proxy.callsign-map]
+# "jean.dupont@example.org" = "F4XYZ"
+
+# Optional native TLS when terminating HTTPS directly without Nginx
+[tls]
+enabled = false
+# cert-path = "/etc/dtnpm/cert.pem"
+# key-path = "/etc/dtnpm/key.pem"
