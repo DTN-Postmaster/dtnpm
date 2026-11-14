@@ -9,7 +9,7 @@ grpc:
 
 web:
   address: "127.0.0.1:8899"
-  static_dir: "../dtnpm-web-core/ui/dist"
+  static-dir: "/home/loic/projets/dtn-postmaster/dtnpm-web-core/ui/dist"
 
 clas: []
 routes: []
