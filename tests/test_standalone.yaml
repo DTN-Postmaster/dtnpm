@@ -1,0 +1,15 @@
+callsign: "STATA"
+node_id: "dtn://stata/"
+
+storage:
+  in-memory: true
+
+grpc:
+  enabled: false
+
+web:
+  address: "127.0.0.1:8899"
+  static_dir: "../dtnpm-web-core/ui/dist"
+
+clas: []
+routes: []

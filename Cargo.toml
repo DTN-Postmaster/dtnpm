@@ -70,16 +70,6 @@ path = "src/main.rs"
 required-features = ["cli"]
 
 [[bin]]
-name = "dtnbasket"
-path = "src/bin/dtnbasket.rs"
-required-features = ["cli"]
-
-[[bin]]
-name = "dtnbasket-cli"
-path = "src/bin/dtnbasket-cli.rs"
-required-features = ["cli"]
-
-[[bin]]
 name = "dtnbib"
 path = "src/bin/dtnbib.rs"
 required-features = ["cli"]
