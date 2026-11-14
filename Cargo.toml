@@ -1,0 +1,185 @@
+[package]
+name = "dtnpm"
+version = "0.2.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+description = "DTN Postmaster (dtnpm): modular Hardy BPv7 bundle processing agent, convergence layers, web console and CLI utilities"
+
+[features]
+default = ["emcom", "cli"]
+
+node = [
+    "dtnpm-core/transport-local",
+    "dep:hardy-echo-service",
+    "dep:hardy-localdisk-storage",
+    "dep:hardy-sqlite-storage",
+]
+cli = [
+    "dep:clap",
+    "dep:tracing-subscriber",
+    "dep:base64",
+    "dep:hex",
+    "dep:regex",
+    "dep:reqwest",
+    "dep:rustls",
+    "dep:rustls-pki-types",
+    "dep:sha1",
+    "dep:sha2",
+    "dep:sqlx",
+    "dep:tokio-rustls",
+    "dep:toml",
+    "dep:webpki-roots",
+]
+web-core = ["dep:dtnpm-web-core", "dep:axum"]
+cla-ltp = ["node", "dep:dtnpm-cla-ltp-kiss"]
+cla-hqfbp = ["node", "dep:dtnpm-cla-hqfbp-kiss"]
+cla-mercury = ["node", "dep:dtnpm-cla-mercury-arq"]
+mod-chat = ["web-core", "dep:dtnpm-mod-chat"]
+mod-files = ["web-core", "dep:dtnpm-mod-files"]
+mod-senml = ["web-core", "dep:dtnpm-mod-senml"]
+
+# Distribution profiles:
+# 1. Full Emergency Communications / All-in-one Hamradio node
+emcom = [
+    "node",
+    "web-core",
+    "cla-ltp",
+    "cla-hqfbp",
+    "cla-mercury",
+    "mod-chat",
+    "mod-files",
+    "mod-senml",
+]
+# 2. Satellite / AMSAT profile (LTP + HQFBP + SenML telemetry)
+amsat = ["node", "web-core", "cla-ltp", "cla-hqfbp", "mod-senml"]
+# 3. Headless RF/TCPCL router node (BPA + CLAs + gRPC server, zero web stack)
+node-headless = ["node", "cla-ltp", "cla-hqfbp", "cla-mercury"]
+# 4. Remote operator WebUI connecting over gRPC to a headless node
+webui-remote = ["web-core", "mod-chat", "mod-files", "mod-senml"]
+
+instrument = [
+    "dtnpm-core/instrument",
+    "hardy-async/instrument",
+    "hardy-bpa/instrument",
+    "tracing/attributes",
+]
+
+[[bin]]
+name = "dtnpm"
+path = "src/main.rs"
+required-features = ["cli"]
+
+[[bin]]
+name = "dtnbasket"
+path = "src/bin/dtnbasket.rs"
+required-features = ["cli"]
+
+[[bin]]
+name = "dtnbasket-cli"
+path = "src/bin/dtnbasket-cli.rs"
+required-features = ["cli"]
+
+[[bin]]
+name = "dtnbib"
+path = "src/bin/dtnbib.rs"
+required-features = ["cli"]
+
+[[bin]]
+name = "dtnfiles"
+path = "src/bin/dtnfiles.rs"
+required-features = ["cli"]
+
+[[bin]]
+name = "dtnforward"
+path = "src/bin/dtnforward.rs"
+required-features = ["cli"]
+
+[[bin]]
+name = "dtnping"
+path = "src/bin/dtnping.rs"
+required-features = ["cli"]
+
+[[bin]]
+name = "dtnprint"
+path = "src/bin/dtnprint.rs"
+required-features = ["cli"]
+
+[[bin]]
+name = "dtnquery"
+path = "src/bin/dtnquery.rs"
+required-features = ["cli"]
+
+[[bin]]
+name = "dtnsend"
+path = "src/bin/dtnsend.rs"
+required-features = ["cli"]
+
+[[bin]]
+name = "dtntrigger"
+path = "src/bin/dtntrigger.rs"
+required-features = ["cli"]
+
+[[bin]]
+name = "hdy-stats"
+path = "src/bin/hdy-stats.rs"
+required-features = ["cli"]
+
+[dependencies]
+dtnpm-core = { path = "../dtnpm-core" }
+dtnpm-web-core = { path = "../dtnpm-web-core", optional = true }
+dtnpm-cla-ltp-kiss = { path = "../dtnpm-cla-ltp-kiss", default-features = false, features = ["serde"], optional = true }
+dtnpm-cla-hqfbp-kiss = { path = "../dtnpm-cla-hqfbp-kiss", default-features = false, features = ["serde", "serial"], optional = true }
+dtnpm-cla-mercury-arq = { path = "../dtnpm-cla-mercury-arq", default-features = false, optional = true }
+dtnpm-mod-chat = { path = "../dtnpm-mod-chat", default-features = false, optional = true }
+dtnpm-mod-files = { path = "../dtnpm-mod-files", default-features = false, optional = true }
+dtnpm-mod-senml = { path = "../dtnpm-mod-senml", default-features = false, optional = true }
+
+hardy-async = { path = "../../hardy/async", features = ["watcher"] }
+hardy-bpa = { path = "../../hardy/bpa", default-features = false, features = ["serde", "rfc9173", "tokio"] }
+hardy-bpv7 = { path = "../../hardy/bpv7", features = ["std", "serde", "rfc9173"] }
+hardy-cbor = { path = "../../hardy/cbor" }
+hardy-eid-patterns = { path = "../../hardy/eid-patterns", features = ["serde", "dtn-pat-item"] }
+hardy-proto = { path = "../../hardy/proto", features = ["serde"] }
+hardy-tcpclv4 = { path = "../../hardy/tcpclv4", features = ["serde"] }
+
+hardy-echo-service = { path = "../../hardy/echo-service", optional = true }
+hardy-localdisk-storage = { path = "../../hardy/localdisk-storage", optional = true }
+hardy-sqlite-storage = { path = "../../hardy/sqlite-storage", optional = true }
+
+anyhow = "1.0"
+axum = { version = "0.8", optional = true }
+bytes = "1.10"
+config = { version = "0.15", features = ["yaml", "toml", "json"] }
+directories = "5"
+rusqlite = { version = "0.40", features = ["array", "bundled", "time"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tempfile = "3"
+time = { version = "0.3", features = ["parsing", "formatting", "local-offset"] }
+tokio = { version = "1", features = ["full"] }
+tracing = "0.1"
+
+base64 = { version = "0.22", optional = true }
+clap = { version = "4", features = ["derive"], optional = true }
+hex = { version = "0.4", optional = true }
+regex = { version = "1", optional = true }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"], optional = true }
+rustls = { version = "0.23", optional = true }
+rustls-pki-types = { version = "1", optional = true }
+sha1 = { version = "0.10", optional = true }
+sha2 = { version = "0.10", optional = true }
+sqlx = { version = "0.9", default-features = false, features = ["postgres", "runtime-tokio", "macros", "time"], optional = true }
+tokio-rustls = { version = "0.26", optional = true }
+toml = { version = "0.8", optional = true }
+tracing-subscriber = { version = "0.3", features = ["env-filter", "registry"], optional = true }
+webpki-roots = { version = "1.0", optional = true }
+
+[dev-dependencies]
+dtnpm-cla-ltp-kiss = { path = "../dtnpm-cla-ltp-kiss", default-features = false }
+hardy-ltp = { path = "../dtnpm-cla-ltp-kiss/ltp" }
+reqwest = { version = "0.12", default-features = false, features = ["json"] }
+tempfile = "3"
+tower = { version = "0.5", features = ["util"] }
+
+[patch.crates-io]
+sqlx-sqlite = { path = "../../hardy/patches/sqlx-sqlite" }

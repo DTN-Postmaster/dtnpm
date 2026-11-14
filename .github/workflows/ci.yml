@@ -1,0 +1,34 @@
+# Expects sibling dtnpm-* checkouts (`../dtnpm-*`), hardy (`../../hardy`), and hqfbp-rs (`../../hqfbp-rs`).
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test-and-profiles:
+    name: Test Suite and Profile Checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: dtn-postmaster/dtnpm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: dtn-postmaster/dtnpm
+      - name: Run cargo test --all-targets (default emcom,cli)
+        working-directory: dtn-postmaster/dtnpm
+        run: cargo test --all-targets
+      - name: Check distribution feature profiles
+        working-directory: dtn-postmaster/dtnpm
+        run: |
+          cargo check --no-default-features --features amsat
+          cargo check --no-default-features --features node-headless
+          cargo check --no-default-features --features webui-remote
+          cargo check --no-default-features --features "emcom,instrument"
+          cargo check --no-default-features --features "webui-remote,cli"
