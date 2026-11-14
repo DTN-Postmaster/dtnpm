@@ -36,6 +36,10 @@ struct Cli {
     #[arg(long, env = "DTN_HDY_TOKEN")]
     token: Option<String>,
 
+    /// Path to a file containing the Bearer token for a remote gRPC BPA node (0600 recommended)
+    #[arg(long, value_name = "FILE")]
+    token_file: Option<PathBuf>,
+
     /// Unix Domain Socket path for connecting to a protected local gRPC BPA node
     #[arg(long, env = "DTN_HDY_SOCKET")]
     socket: Option<String>,
@@ -83,9 +87,12 @@ enum UserCommands {
         /// Assigned role (Admin or Operator)
         #[arg(long, default_value = "Operator")]
         role: String,
-        /// Plaintext password (if omitted, reads one line from stdin)
+        /// Deprecated: plaintext password on CLI (visible via ps); prefer --password-stdin
         #[arg(long)]
         password: Option<String>,
+        /// Read password cleanly from standard input
+        #[arg(long = "password-stdin")]
+        password_stdin: bool,
         /// Optional storage directory override
         #[arg(long)]
         data_dir: Option<PathBuf>,
@@ -94,9 +101,12 @@ enum UserCommands {
     Passwd {
         /// Username
         username: String,
-        /// New password (if omitted, reads one line from stdin)
+        /// Deprecated: plaintext password on CLI (visible via ps); prefer --password-stdin
         #[arg(long)]
         password: Option<String>,
+        /// Read new password cleanly from standard input
+        #[arg(long = "password-stdin")]
+        password_stdin: bool,
         /// Optional storage directory override
         #[arg(long)]
         data_dir: Option<PathBuf>,
@@ -240,6 +250,7 @@ async fn run_remote_webui(
         )
         .await;
 
+    #[allow(unused_mut)]
     let mut modules: Vec<Arc<dyn WebModule>> = Vec::new();
     #[cfg(feature = "mod-chat")]
     modules.push(Arc::new(dtnpm_mod_chat::ChatModule::new()));
@@ -336,8 +347,11 @@ async fn main() -> anyhow::Result<()> {
     }
 
     #[cfg(feature = "web-core")]
+    let resolved_token = dtnpm::resolve_bearer_token(cli.token, cli.token_file.as_deref())?;
+
+    #[cfg(feature = "web-core")]
     if let Some(grpc_url) = cli.remote_bpa {
-        return run_remote_webui(config, grpc_url, cli.token, cli.socket).await;
+        return run_remote_webui(config, grpc_url, resolved_token, cli.socket).await;
     }
 
     #[cfg(feature = "node")]
@@ -355,7 +369,7 @@ async fn main() -> anyhow::Result<()> {
     {
         let grpc_addr = config.grpc.address.to_string();
         let grpc_url = format!("http://{grpc_addr}");
-        return run_remote_webui(config, grpc_url, cli.token, cli.socket).await;
+        return run_remote_webui(config, grpc_url, resolved_token, cli.socket).await;
     }
 
     #[cfg(all(not(feature = "node"), not(feature = "web-core")))]
@@ -381,8 +395,27 @@ fn open_iam_storage(
     InternalStorage::new_disk_with_quota(&dir, config.application.quota.max_storage)
 }
 
-fn read_password_arg(explicit: Option<String>, prompt: &str) -> anyhow::Result<String> {
+fn read_password_arg(
+    explicit: Option<String>,
+    password_stdin: bool,
+    prompt: &str,
+) -> anyhow::Result<String> {
+    if password_stdin {
+        if explicit.is_some() {
+            anyhow::bail!("Cannot specify both --password and --password-stdin");
+        }
+        let mut line = String::new();
+        std::io::stdin().read_line(&mut line)?;
+        let trimmed = line.trim_end_matches(&['\r', '\n'][..]).to_string();
+        if trimmed.is_empty() {
+            anyhow::bail!("Password read from stdin cannot be empty");
+        }
+        return Ok(trimmed);
+    }
     if let Some(pw) = explicit {
+        eprintln!(
+            "WARNING: --password on the command line is deprecated and visible in process listings; prefer --password-stdin or interactive prompt."
+        );
         if pw.is_empty() {
             anyhow::bail!("Password cannot be empty");
         }
@@ -394,7 +427,7 @@ fn read_password_arg(explicit: Option<String>, prompt: &str) -> anyhow::Result<S
     std::io::stdin().read_line(&mut line)?;
     let trimmed = line.trim_end_matches(&['\r', '\n'][..]).to_string();
     if trimmed.is_empty() {
-        anyhow::bail!("Password cannot be empty (pass --password or pipe via stdin)");
+        anyhow::bail!("Password cannot be empty (use --password-stdin or pipe via stdin)");
     }
     Ok(trimmed)
 }
@@ -405,20 +438,30 @@ fn handle_user_command(config_path: Option<&Path>, action: UserCommands) -> anyh
             username,
             role,
             password,
+            password_stdin,
             data_dir,
         } => {
             let storage = open_iam_storage(config_path, data_dir.as_deref())?;
-            let pw = read_password_arg(password, &format!("Password for user '{username}': "))?;
+            let pw = read_password_arg(
+                password,
+                password_stdin,
+                &format!("Password for user '{username}': "),
+            )?;
             let rec = storage.upsert_iam_user(&username, &pw, &role)?;
             println!("User '{}' saved with role '{}'", rec.username, rec.role);
         }
         UserCommands::Passwd {
             username,
             password,
+            password_stdin,
             data_dir,
         } => {
             let storage = open_iam_storage(config_path, data_dir.as_deref())?;
-            let pw = read_password_arg(password, &format!("New password for user '{username}': "))?;
+            let pw = read_password_arg(
+                password,
+                password_stdin,
+                &format!("New password for user '{username}': "),
+            )?;
             if storage.update_iam_user_password(&username, &pw)? {
                 println!("Password updated for user '{username}'");
             } else {

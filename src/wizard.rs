@@ -560,6 +560,14 @@ pub fn run_wizard<R: BufRead, W: Write>(
     std::fs::write(&save_path, &config_content)
         .with_context(|| format!("Failed to write configuration file {}", save_path.display()))?;
 
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&save_path, std::fs::Permissions::from_mode(0o600)).with_context(
+            || format!("Failed to set 0600 permissions on {}", save_path.display()),
+        )?;
+    }
+
     writeln!(
         writer,
         "\n✓ Configuration successfully saved to: {}",

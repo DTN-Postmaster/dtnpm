@@ -7,8 +7,7 @@ no-default-features = false
 
 [advisories]
 ignore = [
-    "RUSTSEC-2026-0459",
-    "RUSTSEC-2024-0449",
+    { id = "RUSTSEC-2026-0459", reason = "VEX not_affected: SQLite session extension is neither compiled nor invoked by dtnpm" },
 ]
 
 [licenses]

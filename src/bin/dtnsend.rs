@@ -61,6 +61,10 @@ struct Args {
     #[clap(long, env = "DTN_HDY_TOKEN")]
     token: Option<String>,
 
+    /// Path to a file containing the Bearer authentication token (0600 recommended)
+    #[clap(long = "token-file", value_name = "FILE")]
+    token_file: Option<std::path::PathBuf>,
+
     /// Optional Unix Domain Socket path for connecting to a protected local BPA
     #[clap(long, env = "DTN_HDY_SOCKET")]
     socket: Option<String>,
@@ -140,9 +144,10 @@ async fn main() -> anyhow::Result<()> {
             eprintln!("Connecting to Hardy BPA at {}", grpc_addr);
         }
 
+        let resolved_token = dtnpm::resolve_bearer_token(args.token, args.token_file.as_deref())?;
         let (remote_bpa, _grpc_guard) = dtnpm_core::create_remote_bpa(
             &grpc_addr,
-            args.token.as_deref(),
+            resolved_token.as_deref(),
             args.socket.as_deref(),
         )?;
         let sender_cla = Arc::new(NoopSenderCla::default());

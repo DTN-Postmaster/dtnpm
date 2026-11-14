@@ -6,16 +6,24 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-User=root
+User=dtnpm
+Group=dtnpm
 WorkingDirectory=/var/lib/dtnpm
+StateDirectory=dtnpm
+ConfigurationDirectory=dtnpm
 ExecStart=/usr/local/bin/dtnpm -c /etc/dtnpm/config.toml
 Restart=on-failure
 RestartSec=5s
 
 # Security hardening options
-ProtectSystem=full
-ProtectHome=read-only
+ProtectSystem=strict
+ProtectHome=true
 PrivateTmp=true
+NoNewPrivileges=true
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+RestrictSUIDSGID=true
+LockPersonality=true
 
 # Resource limits
 LimitNOFILE=65535

@@ -6,4 +6,4 @@ SOURCE_EID="$1"
 PAYLOAD_FILE="$2"
 PAYLOAD_CONTENT=$(cat "$PAYLOAD_FILE")
 
-notify-send "DTN Bundle from $SOURCE_EID" "$PAYLOAD_CONTENT"
+notify-send -- "DTN Bundle from $SOURCE_EID" "$PAYLOAD_CONTENT"

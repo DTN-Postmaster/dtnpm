@@ -4,7 +4,7 @@ use hardy_bpa::bundle::StoredBundleRef;
 use hardy_bpa::bundle::{BundleStatus, StoredBundle};
 use hardy_bpv7::bundle::Id as Bpv7Id;
 use rusqlite::Connection;
-use sha1::{Digest, Sha1};
+use sha2::{Digest, Sha256};
 use sqlx::PgPool;
 use std::path::PathBuf;
 
@@ -45,9 +45,16 @@ enum Commands {
         /// Filter for bundles with source or destination address
         #[clap(short, long)]
         addr: Option<String>,
+        /// Maximum number of matching bundles to return
+        #[clap(long)]
+        limit: Option<usize>,
     },
     /// List bundles status in store
-    Store,
+    Store {
+        /// Maximum number of bundles to return
+        #[clap(long)]
+        limit: Option<usize>,
+    },
     /// General dtnd info
     Info,
     /// Local node id
@@ -182,74 +189,243 @@ struct BundleInfo {
     status: &'static str,
 }
 
-fn query_sqlite(db_path: &std::path::Path) -> anyhow::Result<Vec<BundleInfo>> {
+fn escape_sql_like(raw: &str) -> String {
+    let mut escaped = String::with_capacity(raw.len() + 4);
+    escaped.push('%');
+    for ch in raw.chars() {
+        match ch {
+            '\\' | '%' | '_' => {
+                escaped.push('\\');
+                escaped.push(ch);
+            }
+            _ => escaped.push(ch),
+        }
+    }
+    escaped.push('%');
+    escaped
+}
+
+fn map_sqlite_status(status_code: i64) -> &'static str {
+    match status_code {
+        0 => "New",
+        1 => "Waiting",
+        2 => "ForwardPending",
+        3 => "AduFragment",
+        4 => "Dispatching",
+        5 => "WaitingForService",
+        _ => "Unknown",
+    }
+}
+
+fn map_pg_status(status_str: &str) -> &'static str {
+    match status_str {
+        "new" => "New",
+        "waiting" => "Waiting",
+        "forward_pending" => "ForwardPending",
+        "adu_fragment" => "AduFragment",
+        "dispatching" => "Dispatching",
+        "waiting_for_service" => "WaitingForService",
+        _ => "Unknown",
+    }
+}
+
+#[derive(Debug, Default, PartialEq, Eq)]
+struct DaemonCounts {
+    incoming: usize,
+    outgoing: usize,
+}
+
+fn query_sqlite_counts(db_path: &std::path::Path) -> anyhow::Result<DaemonCounts> {
     let conn = Connection::open(db_path)?;
-    let mut stmt = conn
-        .prepare("SELECT bundle_id, bundle, status_code FROM bundles WHERE bundle IS NOT NULL")?;
+    let mut stmt = conn.prepare(
+        "SELECT status_code, COUNT(*) FROM bundles WHERE bundle IS NOT NULL GROUP BY status_code",
+    )?;
     let rows = stmt.query_map([], |row| {
-        let id_bytes: Vec<u8> = row.get(0)?;
-        let bundle_bytes: Vec<u8> = row.get(1)?;
-        let status_code: i64 = row.get(2)?;
-        Ok((id_bytes, bundle_bytes, status_code))
+        let code: i64 = row.get(0)?;
+        let cnt: i64 = row.get(1)?;
+        Ok((code, cnt))
     })?;
 
-    let mut list = Vec::new();
+    let mut counts = DaemonCounts::default();
     for r in rows {
-        let (id_bytes, bundle_bytes, status_code) = r?;
-        let bpv7_id: Bpv7Id = match serde_json::from_slice(&id_bytes) {
-            Ok(parsed_id) => parsed_id,
-            Err(_) => continue,
-        };
-        let stored: StoredBundle = match serde_json::from_slice(&bundle_bytes) {
-            Ok(b) => b,
-            Err(_) => continue,
-        };
-        let bpa_bundle = stored.into_bundle(BundleStatus::New);
-        let dest_eid = bpa_bundle.bpv7.primary.destination.to_string();
-        let size = bpa_bundle
-            .bpv7
-            .blocks
-            .values()
-            .map(|b| b.extent.end)
-            .max()
-            .unwrap_or(0);
+        let (code, cnt) = r?;
+        let n = usize::try_from(cnt.max(0)).unwrap_or(usize::MAX);
+        match map_sqlite_status(code) {
+            "New" | "Waiting" | "WaitingForService" => {
+                counts.incoming = counts.incoming.saturating_add(n);
+            }
+            "ForwardPending" | "Dispatching" => {
+                counts.outgoing = counts.outgoing.saturating_add(n);
+            }
+            _ => {}
+        }
+    }
+    Ok(counts)
+}
 
-        let creation_time = bpv7_id
-            .timestamp
-            .creation_time()
-            .map_or(0, |t| t.millisecs());
-        let status = match status_code {
-            0 => "New",
-            1 => "Waiting",
-            2 => "ForwardPending",
-            3 => "AduFragment",
-            4 => "Dispatching",
-            5 => "WaitingForService",
-            _ => "Unknown",
+async fn query_postgres_counts(database_url: &str) -> anyhow::Result<DaemonCounts> {
+    let pool = PgPool::connect(database_url).await?;
+    let rows = sqlx::query_as::<_, (String, i64)>(
+        "SELECT metadata.status::text, COUNT(*) FROM bundles JOIN metadata ON bundles.id = metadata.id GROUP BY metadata.status",
+    )
+    .fetch_all(&pool)
+    .await?;
+
+    let mut counts = DaemonCounts::default();
+    for (status_str, cnt) in rows {
+        let n = usize::try_from(cnt.max(0)).unwrap_or(usize::MAX);
+        match map_pg_status(&status_str) {
+            "New" | "Waiting" | "WaitingForService" => {
+                counts.incoming = counts.incoming.saturating_add(n);
+            }
+            "ForwardPending" | "Dispatching" => {
+                counts.outgoing = counts.outgoing.saturating_add(n);
+            }
+            _ => {}
+        }
+    }
+    Ok(counts)
+}
+
+fn query_sqlite(
+    db_path: &std::path::Path,
+    addr_filter: Option<&str>,
+    limit: Option<usize>,
+) -> anyhow::Result<Vec<BundleInfo>> {
+    let conn = Connection::open(db_path)?;
+    let mut list = Vec::new();
+
+    let parse_row =
+        |id_bytes: Vec<u8>, bundle_bytes: Vec<u8>, status_code: i64| -> Option<BundleInfo> {
+            let bpv7_id: Bpv7Id = serde_json::from_slice(&id_bytes).ok()?;
+            let stored: StoredBundle = serde_json::from_slice(&bundle_bytes).ok()?;
+            let bpa_bundle = stored.into_bundle(BundleStatus::New);
+            let source = bpv7_id.source.to_string();
+            let dest_eid = bpa_bundle.bpv7.primary.destination.to_string();
+            if let Some(filter_addr) = addr_filter
+                && !source.contains(filter_addr)
+                && !dest_eid.contains(filter_addr)
+            {
+                return None;
+            }
+            let size = bpa_bundle
+                .bpv7
+                .blocks
+                .values()
+                .map(|b| b.extent.end)
+                .max()
+                .unwrap_or(0);
+            let creation_time = bpv7_id
+                .timestamp
+                .creation_time()
+                .map_or(0, |t| t.millisecs());
+            Some(BundleInfo {
+                id: bpv7_id.to_key(),
+                source,
+                destination: dest_eid,
+                creation_time,
+                size: usize::try_from(size).unwrap_or(usize::MAX),
+                status: map_sqlite_status(status_code),
+            })
         };
 
-        list.push(BundleInfo {
-            id: bpv7_id.to_key(),
-            source: bpv7_id.source.to_string(),
-            destination: dest_eid,
-            creation_time,
-            size: size as usize,
-            status,
-        });
+    if let Some(addr) = addr_filter {
+        let pattern = escape_sql_like(addr);
+        let mut stmt = conn.prepare(
+            "SELECT bundle_id, bundle, status_code FROM bundles \
+             WHERE bundle IS NOT NULL \
+             AND (CAST(bundle_id AS TEXT) LIKE ?1 ESCAPE '\\' OR CAST(bundle AS TEXT) LIKE ?1 ESCAPE '\\')",
+        )?;
+        let rows = stmt.query_map([pattern], |row| {
+            let id_bytes: Vec<u8> = row.get(0)?;
+            let bundle_bytes: Vec<u8> = row.get(1)?;
+            let status_code: i64 = row.get(2)?;
+            Ok((id_bytes, bundle_bytes, status_code))
+        })?;
+        for r in rows {
+            let (id_bytes, bundle_bytes, status_code) = r?;
+            if let Some(info) = parse_row(id_bytes, bundle_bytes, status_code) {
+                list.push(info);
+                if limit.is_some_and(|max| list.len() >= max) {
+                    break;
+                }
+            }
+        }
+    } else if let Some(max) = limit {
+        let sql_limit = i64::try_from(max).unwrap_or(i64::MAX);
+        let mut stmt = conn.prepare(
+            "SELECT bundle_id, bundle, status_code FROM bundles WHERE bundle IS NOT NULL LIMIT ?1",
+        )?;
+        let rows = stmt.query_map([sql_limit], |row| {
+            let id_bytes: Vec<u8> = row.get(0)?;
+            let bundle_bytes: Vec<u8> = row.get(1)?;
+            let status_code: i64 = row.get(2)?;
+            Ok((id_bytes, bundle_bytes, status_code))
+        })?;
+        for r in rows {
+            let (id_bytes, bundle_bytes, status_code) = r?;
+            if let Some(info) = parse_row(id_bytes, bundle_bytes, status_code) {
+                list.push(info);
+            }
+        }
+    } else {
+        let mut stmt = conn.prepare(
+            "SELECT bundle_id, bundle, status_code FROM bundles WHERE bundle IS NOT NULL",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            let id_bytes: Vec<u8> = row.get(0)?;
+            let bundle_bytes: Vec<u8> = row.get(1)?;
+            let status_code: i64 = row.get(2)?;
+            Ok((id_bytes, bundle_bytes, status_code))
+        })?;
+        for r in rows {
+            let (id_bytes, bundle_bytes, status_code) = r?;
+            if let Some(info) = parse_row(id_bytes, bundle_bytes, status_code) {
+                list.push(info);
+            }
+        }
     }
 
     Ok(list)
 }
 
-async fn query_postgres(database_url: &str) -> anyhow::Result<Vec<BundleInfo>> {
+async fn query_postgres(
+    database_url: &str,
+    addr_filter: Option<&str>,
+    limit: Option<usize>,
+) -> anyhow::Result<Vec<BundleInfo>> {
     let pool = PgPool::connect(database_url).await?;
-    let rows = sqlx::query_as::<_, (String, String, Vec<u8>)>(
-        "SELECT bundles.bundle_id, metadata.status::text, metadata.bundle \
-         FROM bundles \
-         JOIN metadata ON bundles.id = metadata.id",
-    )
-    .fetch_all(&pool)
-    .await?;
+    let rows = if let Some(addr) = addr_filter {
+        let pattern = escape_sql_like(addr);
+        sqlx::query_as::<_, (String, String, Vec<u8>)>(
+            "SELECT bundles.bundle_id, metadata.status::text, metadata.bundle \
+             FROM bundles \
+             JOIN metadata ON bundles.id = metadata.id \
+             WHERE bundles.bundle_id LIKE $1 ESCAPE '\\' OR convert_from(metadata.bundle, 'UTF8') LIKE $1 ESCAPE '\\'",
+        )
+        .bind(pattern)
+        .fetch_all(&pool)
+        .await?
+    } else if let Some(max) = limit {
+        let sql_limit = i64::try_from(max).unwrap_or(i64::MAX);
+        sqlx::query_as::<_, (String, String, Vec<u8>)>(
+            "SELECT bundles.bundle_id, metadata.status::text, metadata.bundle \
+             FROM bundles \
+             JOIN metadata ON bundles.id = metadata.id \
+             LIMIT $1",
+        )
+        .bind(sql_limit)
+        .fetch_all(&pool)
+        .await?
+    } else {
+        sqlx::query_as::<_, (String, String, Vec<u8>)>(
+            "SELECT bundles.bundle_id, metadata.status::text, metadata.bundle \
+             FROM bundles \
+             JOIN metadata ON bundles.id = metadata.id",
+        )
+        .fetch_all(&pool)
+        .await?
+    };
 
     let mut list = Vec::new();
     for (id_str, status_str, json_bytes) in rows {
@@ -257,13 +433,19 @@ async fn query_postgres(database_url: &str) -> anyhow::Result<Vec<BundleInfo>> {
             Ok(parsed_id) => parsed_id,
             Err(_) => continue,
         };
-
         let stored: StoredBundle = match serde_json::from_slice(&json_bytes) {
             Ok(b) => b,
             Err(_) => continue,
         };
         let bpa_bundle = stored.into_bundle(BundleStatus::New);
+        let source = bpv7_id.source.to_string();
         let dest_eid = bpa_bundle.bpv7.primary.destination.to_string();
+        if let Some(filter_addr) = addr_filter
+            && !source.contains(filter_addr)
+            && !dest_eid.contains(filter_addr)
+        {
+            continue;
+        }
         let size = bpa_bundle
             .bpv7
             .blocks
@@ -276,36 +458,29 @@ async fn query_postgres(database_url: &str) -> anyhow::Result<Vec<BundleInfo>> {
             .timestamp
             .creation_time()
             .map_or(0, |t| t.millisecs());
-        let status = match status_str.as_str() {
-            "new" => "New",
-            "waiting" => "Waiting",
-            "forward_pending" => "ForwardPending",
-            "adu_fragment" => "AduFragment",
-            "dispatching" => "Dispatching",
-            "waiting_for_service" => "WaitingForService",
-            _ => "Unknown",
-        };
 
         list.push(BundleInfo {
             id: id_str,
-            source: bpv7_id.source.to_string(),
+            source,
             destination: dest_eid,
             creation_time,
-            size: size as usize,
-            status,
+            size: usize::try_from(size).unwrap_or(usize::MAX),
+            status: map_pg_status(&status_str),
         });
+        if limit.is_some_and(|max| list.len() >= max) {
+            break;
+        }
     }
 
     Ok(list)
 }
 
-#[tokio::main]
-async fn main() -> anyhow::Result<()> {
-    let args = Args::parse();
-    let config = resolve_config(args.config);
-
-    // Fetch bundle states offline via DB access
-    let bundles_info = match &config.storage.metadata {
+async fn load_bundles_info(
+    config: &HardyConfig,
+    addr_filter: Option<&str>,
+    limit: Option<usize>,
+) -> Vec<BundleInfo> {
+    match &config.storage.metadata {
         MetadataConfig::Memory => {
             eprintln!("BPA is configured with in-memory storage. No offline database to query.");
             Vec::new()
@@ -319,7 +494,7 @@ async fn main() -> anyhow::Result<()> {
                 );
                 Vec::new()
             } else {
-                match query_sqlite(&db_path) {
+                match query_sqlite(&db_path, addr_filter, limit) {
                     Ok(list) => list,
                     Err(e) => {
                         eprintln!("Error querying SQLite database: {e}");
@@ -328,14 +503,58 @@ async fn main() -> anyhow::Result<()> {
                 }
             }
         }
-        MetadataConfig::Postgres { database_url } => match query_postgres(database_url).await {
-            Ok(list) => list,
-            Err(e) => {
-                eprintln!("Error querying PostgreSQL database: {e}");
-                Vec::new()
+        MetadataConfig::Postgres { database_url } => {
+            match query_postgres(database_url, addr_filter, limit).await {
+                Ok(list) => list,
+                Err(e) => {
+                    eprintln!("Error querying PostgreSQL database: {e}");
+                    Vec::new()
+                }
             }
-        },
-    };
+        }
+    }
+}
+
+async fn load_daemon_counts(config: &HardyConfig) -> DaemonCounts {
+    match &config.storage.metadata {
+        MetadataConfig::Memory => {
+            eprintln!("BPA is configured with in-memory storage. No offline database to query.");
+            DaemonCounts::default()
+        }
+        MetadataConfig::Sqlite { db_dir, db_name } => {
+            let db_path = db_dir.join(db_name);
+            if !db_path.exists() {
+                eprintln!(
+                    "Warning: SQLite database file not found at {}. Returning empty.",
+                    db_path.display()
+                );
+                DaemonCounts::default()
+            } else {
+                match query_sqlite_counts(&db_path) {
+                    Ok(c) => c,
+                    Err(e) => {
+                        eprintln!("Error querying SQLite database: {e}");
+                        DaemonCounts::default()
+                    }
+                }
+            }
+        }
+        MetadataConfig::Postgres { database_url } => {
+            match query_postgres_counts(database_url).await {
+                Ok(c) => c,
+                Err(e) => {
+                    eprintln!("Error querying PostgreSQL database: {e}");
+                    DaemonCounts::default()
+                }
+            }
+        }
+    }
+}
+
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    let args = Args::parse();
+    let config = resolve_config(args.config);
 
     match &args.cmd {
         Commands::Nodeid => {
@@ -360,7 +579,8 @@ async fn main() -> anyhow::Result<()> {
             );
             println!("Please refer to TICKETS-FOR-HARDY.md for details.");
         }
-        Commands::Store => {
+        Commands::Store { limit } => {
+            let bundles_info = load_bundles_info(&config, None, *limit).await;
             println!("Listing of bundles status in store:");
             let status_list: Vec<String> = bundles_info
                 .iter()
@@ -370,19 +590,11 @@ async fn main() -> anyhow::Result<()> {
         }
         Commands::Info => {
             println!("Daemon info:");
-            let mut incoming = 0;
-            let mut outgoing = 0;
-            for b in &bundles_info {
-                match b.status {
-                    "New" | "Waiting" | "WaitingForService" => incoming += 1,
-                    "ForwardPending" | "Dispatching" => outgoing += 1,
-                    _ => {}
-                }
-            }
+            let counts = load_daemon_counts(&config).await;
             let stats = serde_json::json!({
-                "incoming": incoming,
+                "incoming": counts.incoming,
                 "dups": 0,
-                "outgoing": outgoing,
+                "outgoing": counts.outgoing,
                 "delivered": 0,
                 "broken": 0
             });
@@ -392,23 +604,15 @@ async fn main() -> anyhow::Result<()> {
             verbose,
             digest,
             addr,
+            limit,
         } => {
+            let filtered = load_bundles_info(&config, addr.as_deref(), *limit).await;
             println!("Listing of bundles in store:");
-            let filtered: Vec<&BundleInfo> = bundles_info
-                .iter()
-                .filter(|b| {
-                    if let Some(filter_addr) = addr {
-                        b.source.contains(filter_addr) || b.destination.contains(filter_addr)
-                    } else {
-                        true
-                    }
-                })
-                .collect();
 
             if *digest {
                 let mut ids: Vec<String> = filtered.iter().map(|b| b.id.clone()).collect();
                 ids.sort();
-                let mut hasher = Sha1::new();
+                let mut hasher = Sha256::new();
                 for id in ids {
                     hasher.update(id.as_bytes());
                 }
@@ -561,7 +765,7 @@ storage:
         )?;
 
         // Run query_sqlite
-        let results = query_sqlite(&db_path)?;
+        let results = query_sqlite(&db_path, None, None)?;
         assert_eq!(results.len(), 1);
         let info = &results[0];
         assert_eq!(info.id, bpv7_id.to_key());
@@ -569,6 +773,22 @@ storage:
         assert_eq!(info.destination, "dtn://my-destination/");
         assert_eq!(info.size, 128);
         assert_eq!(info.status, "Waiting");
+
+        // SQL pushdown by address should find matching source/destination and exclude non-matching
+        let matched = query_sqlite(&db_path, Some("my-destination"), Some(10))?;
+        assert_eq!(matched.len(), 1);
+        let unmatched = query_sqlite(&db_path, Some("dtn://other/"), Some(10))?;
+        assert!(unmatched.is_empty());
+
+        // Aggregate counts without loading full bundles
+        let counts = query_sqlite_counts(&db_path)?;
+        assert_eq!(
+            counts,
+            DaemonCounts {
+                incoming: 1,
+                outgoing: 0
+            }
+        );
 
         // Clean up
         let _ = std::fs::remove_file(&db_path);

@@ -286,6 +286,7 @@ impl HamServer {
                                 .clone()
                                 .unwrap_or_else(|| "N0CALL".to_string())
                         }),
+                        require_callsign: false,
                         control_addr: mercury_cfg.control_addr,
                         data_addr: mercury_cfg.data_addr,
                         bandwidth: mercury_cfg.bandwidth,
@@ -494,7 +495,7 @@ impl HamServer {
     /// Returns the list of compiled-in [`WebModule`] plugins enabled by Cargo features.
     #[cfg(feature = "web-core")]
     #[must_use]
-    #[allow(clippy::vec_init_then_push)]
+    #[allow(clippy::vec_init_then_push, unused_mut)]
     pub fn web_modules(&self) -> Vec<Arc<dyn WebModule>> {
         let mut modules: Vec<Arc<dyn WebModule>> = Vec::new();
         #[cfg(feature = "mod-chat")]
@@ -645,27 +646,44 @@ impl HamServer {
             let auth_cfg = &self.config.grpc.auth;
             if auth_cfg.enabled || auth_cfg.socket_path.is_some() {
                 let use_ephemeral_internal = auth_cfg.enabled || !self.config.grpc.enabled;
-                let (internal_addr, upstream_for_gateway) = if use_ephemeral_internal {
-                    let ephemeral = std::net::TcpListener::bind("127.0.0.1:0")?;
-                    let addr = ephemeral.local_addr()?;
-                    drop(ephemeral);
-                    (addr, addr)
+                let internal_addr = if use_ephemeral_internal {
+                    SocketAddr::from(([127, 0, 0, 1], 0))
                 } else {
-                    let addr = grpc_config.address;
-                    let upstream = if addr.ip().is_unspecified() {
-                        SocketAddr::from(([127, 0, 0, 1], addr.port()))
-                    } else {
-                        addr
-                    };
-                    (addr, upstream)
+                    grpc_config.address
+                };
+
+                // Guard internal ephemeral loopback registrations behind GrpcRegistrationGate
+                // so unprivileged local processes cannot bypass GrpcSecurityGateway.
+                let registration_gate = if use_ephemeral_internal {
+                    Some(Arc::new(
+                        dtnpm_core::iam::grpc_guard::GrpcRegistrationGate::new(),
+                    ))
+                } else {
+                    None
+                };
+                let grpc_target: Arc<dyn hardy_bpa::bpa::BpaRegistration> = match registration_gate
+                {
+                    Some(ref gate) => {
+                        Arc::new(dtnpm_core::iam::grpc_guard::GuardedBpaRegistration::new(
+                            Arc::new(self.service_tracker.clone()),
+                            gate.clone(),
+                        ))
+                    }
+                    None => Arc::new(self.service_tracker.clone()),
                 };
 
                 let internal_cfg = hardy_proto::server::Config {
                     address: internal_addr,
                     services: grpc_config.services.clone(),
                 };
-                let server = GrpcServer::new(&internal_cfg, Arc::new(self.service_tracker.clone()))
+                let server = GrpcServer::new(&internal_cfg, grpc_target)
                     .map_err(|e| anyhow::anyhow!("Failed to create gRPC server: {e}"))?;
+                let bound_addr = server.local_addr();
+                let upstream_for_gateway = if bound_addr.ip().is_unspecified() {
+                    SocketAddr::from(([127, 0, 0, 1], bound_addr.port()))
+                } else {
+                    bound_addr
+                };
                 let cancel = self.tasks.cancel_token().clone();
                 hardy_async::spawn!(self.tasks, "grpc_server", async move {
                     if let Err(e) = server.serve(cancel).await {
@@ -686,16 +704,18 @@ impl HamServer {
                 let policy_engine = Arc::new(dtnpm_core::iam::PolicyEngine::load(
                     self.config.auth.policy_path.as_deref(),
                 )?);
-                let active_sock = dtnpm_core::iam::grpc_guard::GrpcSecurityGateway::start(
-                    grpc_config.address,
-                    upstream_for_gateway,
-                    auth_cfg.clone(),
-                    self.config.callsign.clone(),
-                    policy_engine,
-                    Some(self.internal_storage.clone()),
-                    self.tasks.cancel_token().clone(),
-                )
-                .await?;
+                let active_sock =
+                    dtnpm_core::iam::grpc_guard::GrpcSecurityGateway::start_with_gate(
+                        grpc_config.address,
+                        upstream_for_gateway,
+                        auth_cfg.clone(),
+                        self.config.callsign.clone(),
+                        policy_engine,
+                        Some(self.internal_storage.clone()),
+                        registration_gate,
+                        self.tasks.cancel_token().clone(),
+                    )
+                    .await?;
                 if auth_cfg.enabled {
                     info!(
                         "gRPC authenticated TCP gateway listening on {}",

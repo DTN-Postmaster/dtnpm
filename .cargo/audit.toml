@@ -1,7 +1,6 @@
 [advisories]
 ignore = [
-    # libsqlite3-sys CVE-2026-119375 via upstream sqlx-sqlite
+    # VEX Status: not_affected (component: sqlite3_session / sqlx-sqlite)
+    # Justification: libsqlite3-sys CVE-2026-119375 only affects SQLite session extension APIs, which dtnpm does not enable or invoke.
     "RUSTSEC-2026-0459",
-    # unsafe-libyaml unmaintained via upstream serde_yaml (config crate)
-    "RUSTSEC-2024-0449",
 ]

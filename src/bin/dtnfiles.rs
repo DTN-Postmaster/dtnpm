@@ -58,9 +58,17 @@ struct Args {
     #[arg(short = 'm', long = "metadata")]
     metadata: bool,
 
+    /// Maximum accepted bundle payload size in MiB before buffering (default = 100, 0 = unlimited)
+    #[arg(long = "max-size-mb", default_value_t = 100)]
+    max_size_mb: u64,
+
     /// Optional Bearer authentication token for protected gRPC BPA endpoints
     #[arg(long, env = "DTN_HDY_TOKEN")]
     token: Option<String>,
+
+    /// Path to a file containing the Bearer authentication token (0600 recommended)
+    #[arg(long = "token-file", value_name = "FILE")]
+    token_file: Option<PathBuf>,
 
     /// Optional Unix Domain Socket path for connecting to a protected local BPA
     #[arg(long, env = "DTN_HDY_SOCKET")]
@@ -74,6 +82,7 @@ struct FilesService {
     keystore: KeyStore,
     policy: VerifyPolicy,
     metadata: bool,
+    max_size_bytes: u64,
 }
 
 fn detect_extension(data: &[u8]) -> &'static str {
@@ -279,6 +288,13 @@ impl BpaService for FilesService {
         total_len: u64,
         stream: &mut dyn hardy_bpa::stream::Receiver<hardy_bpa::stream::Segment>,
     ) -> hardy_bpa::services::Result<()> {
+        if self.max_size_bytes > 0 && total_len > self.max_size_bytes {
+            eprintln!(
+                "WARNING: Dropped oversized bundle ({} bytes > {} byte limit).",
+                total_len, self.max_size_bytes
+            );
+            return Ok(());
+        }
         let data = hardy_bpa::stream::buffer_stream(stream, total_len).await?;
         let (source, bundle_id_str, payload, bundle_meta) = match hardy_bpv7::parse::parse(
             data.clone(),
@@ -363,7 +379,22 @@ impl BpaService for FilesService {
         }
 
         let ext = detect_extension(&payload);
-        let safe_bundle_id = bundle_id_str.replace(['/', '\\'], "_");
+        let sanitized_chars: String = bundle_id_str
+            .chars()
+            .map(|c| {
+                if c.is_ascii_alphanumeric() || matches!(c, '_' | '-') {
+                    c
+                } else {
+                    '_'
+                }
+            })
+            .take(128)
+            .collect();
+        let safe_bundle_id = if sanitized_chars.is_empty() {
+            "bundle".to_string()
+        } else {
+            sanitized_chars
+        };
         let filename = format!("{}.{}", safe_bundle_id, ext);
         let dest_path = self.dir.join(filename);
 
@@ -381,7 +412,7 @@ impl BpaService for FilesService {
             eprintln!("Saving payload from {} to {}", source, dest_path.display());
         }
 
-        if let Err(e) = std::fs::write(&dest_path, &to_write) {
+        if let Err(e) = tokio::fs::write(&dest_path, &to_write).await {
             eprintln!(
                 "ERROR: Failed to write bundle payload to {}: {}",
                 dest_path.display(),
@@ -394,7 +425,7 @@ impl BpaService for FilesService {
                 let meta_filename = format!("{}-metadata.json", safe_bundle_id);
                 let meta_path = self.dir.join(meta_filename);
                 if let Ok(meta_str) = serde_json::to_string_pretty(&meta_val) {
-                    if let Err(e) = std::fs::write(&meta_path, meta_str) {
+                    if let Err(e) = tokio::fs::write(&meta_path, meta_str).await {
                         eprintln!(
                             "ERROR: Failed to write bundle metadata to {}: {}",
                             meta_path.display(),
@@ -450,8 +481,12 @@ async fn main() -> anyhow::Result<()> {
         std::fs::create_dir_all(&args.dir)?;
     }
 
-    let (remote_bpa, _grpc_guard) =
-        dtnpm_core::create_remote_bpa(&grpc_addr, args.token.as_deref(), args.socket.as_deref())?;
+    let resolved_token = dtnpm::resolve_bearer_token(args.token, args.token_file.as_deref())?;
+    let (remote_bpa, _grpc_guard) = dtnpm_core::create_remote_bpa(
+        &grpc_addr,
+        resolved_token.as_deref(),
+        args.socket.as_deref(),
+    )?;
     let service = Arc::new(FilesService {
         sink: OnceCell::new(),
         verbose: args.verbose,
@@ -459,6 +494,7 @@ async fn main() -> anyhow::Result<()> {
         keystore,
         policy,
         metadata: args.metadata,
+        max_size_bytes: args.max_size_mb.saturating_mul(1024 * 1024),
     });
 
     let service_id = if let Ok(num) = args.service.parse::<u32>() {

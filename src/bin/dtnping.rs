@@ -101,6 +101,10 @@ struct Args {
     #[arg(long, env = "DTN_HDY_TOKEN")]
     token: Option<String>,
 
+    /// Path to a file containing the Bearer authentication token (0600 recommended)
+    #[arg(long = "token-file", value_name = "FILE")]
+    token_file: Option<std::path::PathBuf>,
+
     /// Optional Unix Domain Socket path for connecting to a protected local BPA
     #[arg(long, env = "DTN_HDY_SOCKET")]
     socket: Option<String>,
@@ -511,8 +515,12 @@ async fn main() -> anyhow::Result<()> {
         eprintln!("Connecting to Hardy BPA at {}", grpc_addr);
     }
 
-    let (remote_bpa, _grpc_guard) =
-        dtnpm_core::create_remote_bpa(&grpc_addr, args.token.as_deref(), args.socket.as_deref())?;
+    let resolved_token = dtnpm::resolve_bearer_token(args.token, args.token_file.as_deref())?;
+    let (remote_bpa, _grpc_guard) = dtnpm_core::create_remote_bpa(
+        &grpc_addr,
+        resolved_token.as_deref(),
+        args.socket.as_deref(),
+    )?;
 
     let destination_eid = match args.destination.parse::<Eid>() {
         Ok(eid) => eid,
@@ -730,6 +738,14 @@ async fn main() -> anyhow::Result<()> {
                     Ok(bundle_id) => {
                         let mut s = state.lock().unwrap_or_else(|p| p.into_inner());
                         s.sent += 1;
+                        const MAX_TRACKED_PINGS: usize = 10_000;
+                        if s.sent_times.len() >= MAX_TRACKED_PINGS {
+                            let stale_threshold = seq.saturating_sub(MAX_TRACKED_PINGS as u32);
+                            s.sent_times.retain(|&k, _| k > stale_threshold);
+                            s.bundle_id_to_seqno.retain(|_, &mut v| v > stale_threshold);
+                            s.replied.retain(|&k| k > stale_threshold);
+                            s.path_hops.retain(|&k, _| k > stale_threshold);
+                        }
                         s.sent_times.insert(seq, send_time);
                         s.bundle_id_to_seqno.insert(bundle_id, seq);
                     }

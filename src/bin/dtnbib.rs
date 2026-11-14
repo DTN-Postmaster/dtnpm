@@ -8,7 +8,7 @@ use hardy_bpa::bpa::BpaRegistration;
 use hardy_bpa::services::{Service as BpaService, ServiceSink};
 use hardy_bpv7::{
     builder::Builder,
-    eid::{Eid, Service},
+    eid::{Eid, NodeId, Service},
 };
 use std::sync::Arc;
 use tokio::sync::OnceCell;
@@ -74,6 +74,10 @@ struct Args {
     #[arg(long, env = "DTN_HDY_TOKEN")]
     token: Option<String>,
 
+    /// Path to a file containing the Bearer authentication token (0600 recommended)
+    #[arg(long = "token-file", value_name = "FILE")]
+    token_file: Option<std::path::PathBuf>,
+
     /// Optional Unix Domain Socket path for connecting to a protected local BPA
     #[arg(long, env = "DTN_HDY_SOCKET")]
     socket: Option<String>,
@@ -113,18 +117,36 @@ impl BibService {
                     let res: Result<Vec<u8>, hardy_cbor::decode::Error> =
                         content_arr.parse_value(|value, _, _| match value {
                             hardy_cbor::decode::Value::Bytes(r) => {
-                                let absolute_start = arr_offset + content_arr_offset + r.start;
-                                let absolute_end = arr_offset + content_arr_offset + r.end;
-                                Ok(payload_data[absolute_start..absolute_end].to_vec())
+                                let base = arr_offset
+                                    .checked_add(content_arr_offset)
+                                    .ok_or(hardy_cbor::decode::Error::TooBig)?;
+                                let absolute_start = base
+                                    .checked_add(r.start)
+                                    .ok_or(hardy_cbor::decode::Error::TooBig)?;
+                                let absolute_end = base
+                                    .checked_add(r.end)
+                                    .ok_or(hardy_cbor::decode::Error::TooBig)?;
+                                payload_data
+                                    .get(absolute_start..absolute_end)
+                                    .map(|s| s.to_vec())
+                                    .ok_or(hardy_cbor::decode::Error::NeedMoreData(1))
                             }
                             hardy_cbor::decode::Value::ByteStream(ranges) => {
+                                let base = arr_offset
+                                    .checked_add(content_arr_offset)
+                                    .ok_or(hardy_cbor::decode::Error::TooBig)?;
                                 let mut acc = Vec::new();
                                 for r in ranges {
-                                    let absolute_start = arr_offset + content_arr_offset + r.start;
-                                    let absolute_end = arr_offset + content_arr_offset + r.end;
-                                    acc.extend_from_slice(
-                                        &payload_data[absolute_start..absolute_end],
-                                    );
+                                    let absolute_start = base
+                                        .checked_add(r.start)
+                                        .ok_or(hardy_cbor::decode::Error::TooBig)?;
+                                    let absolute_end = base
+                                        .checked_add(r.end)
+                                        .ok_or(hardy_cbor::decode::Error::TooBig)?;
+                                    let slice = payload_data
+                                        .get(absolute_start..absolute_end)
+                                        .ok_or(hardy_cbor::decode::Error::NeedMoreData(1))?;
+                                    acc.extend_from_slice(slice);
                                 }
                                 Ok(acc)
                             }
@@ -294,10 +316,8 @@ impl BpaService for BibService {
             eprintln!("EID rewritten: {} -> {}", inner_dest, rewritten_dest);
         }
 
-        // 5. Transit check
-        let is_local = rewritten_dest
-            .to_string()
-            .starts_with(&self.local_node_eid.to_string());
+        // 5. Transit check (exact NodeId authority match rather than string prefix matching)
+        let is_local = is_local_destination(&rewritten_dest, &self.local_node_eid);
 
         if !is_local && self.no_transit {
             if self.verbose {
@@ -443,6 +463,26 @@ impl BpaService for BibService {
     }
 }
 
+fn eid_node_id(eid: &Eid) -> Option<NodeId> {
+    match eid {
+        Eid::LocalNode(_) => Some(NodeId::LocalNode),
+        Eid::LegacyIpn { fqnn, .. } | Eid::Ipn { fqnn, .. } => Some(NodeId::Ipn(*fqnn)),
+        Eid::Dtn { node_name, .. } => Some(NodeId::Dtn(node_name.clone())),
+        Eid::Null | Eid::Unknown { .. } => None,
+    }
+}
+
+fn is_local_destination(dest: &Eid, local: &Eid) -> bool {
+    if matches!(dest, Eid::Null) {
+        return false;
+    }
+    match (eid_node_id(dest), eid_node_id(local)) {
+        (Some(NodeId::LocalNode), Some(_)) => true,
+        (Some(dest_node), Some(local_node)) => dest_node == local_node,
+        _ => dest == local,
+    }
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let args = Args::parse();
@@ -462,8 +502,12 @@ async fn main() -> anyhow::Result<()> {
         eprintln!("Connecting to Hardy BPA at {}", grpc_addr);
     }
 
-    let (remote_bpa, _grpc_guard) =
-        dtnpm_core::create_remote_bpa(&grpc_addr, args.token.as_deref(), args.socket.as_deref())?;
+    let resolved_token = dtnpm::resolve_bearer_token(args.token, args.token_file.as_deref())?;
+    let (remote_bpa, _grpc_guard) = dtnpm_core::create_remote_bpa(
+        &grpc_addr,
+        resolved_token.as_deref(),
+        args.socket.as_deref(),
+    )?;
     let sender_cla = Arc::new(NoopSenderCla::default());
 
     // Register dynamically as a CLA with a retry loop to withstand transient BPA restarts
@@ -663,5 +707,20 @@ mod tests {
 
         let parsed_bytes = service.parse_bibe_pdu(&bibe_pdu_bytes).unwrap();
         assert_eq!(parsed_bytes, inner_bundle_data);
+    }
+
+    #[test]
+    fn test_is_local_destination_uses_exact_node_authority() {
+        let local_dtn: Eid = "dtn://node1/".parse().unwrap();
+        let same_dtn: Eid = "dtn://node1/svc".parse().unwrap();
+        let prefix_spoof_dtn: Eid = "dtn://node10/svc".parse().unwrap();
+        assert!(is_local_destination(&same_dtn, &local_dtn));
+        assert!(!is_local_destination(&prefix_spoof_dtn, &local_dtn));
+
+        let local_ipn: Eid = "ipn:1.0".parse().unwrap();
+        let same_ipn: Eid = "ipn:1.42".parse().unwrap();
+        let other_ipn: Eid = "ipn:10.42".parse().unwrap();
+        assert!(is_local_destination(&same_ipn, &local_ipn));
+        assert!(!is_local_destination(&other_ipn, &local_ipn));
     }
 }

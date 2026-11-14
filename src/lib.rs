@@ -36,3 +36,49 @@ pub use server::HamServer;
 
 pub mod wizard;
 pub use wizard::{run_interactive_wizard, run_wizard};
+
+/// Resolves an optional gRPC/WebUI bearer token from an explicit CLI/env value or `--token-file`.
+pub fn resolve_bearer_token(
+    token: Option<String>,
+    token_file: Option<&std::path::Path>,
+) -> anyhow::Result<Option<String>> {
+    if let Some(t) = token {
+        let trimmed = t.trim().to_string();
+        if !trimmed.is_empty() {
+            return Ok(Some(trimmed));
+        }
+    }
+    if let Some(path) = token_file {
+        let content = std::fs::read_to_string(path)
+            .map_err(|e| anyhow::anyhow!("Failed to read token file '{}': {e}", path.display()))?;
+        let trimmed = content.trim().to_string();
+        if trimmed.is_empty() {
+            anyhow::bail!("Token file '{}' is empty", path.display());
+        }
+        return Ok(Some(trimmed));
+    }
+    Ok(None)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::resolve_bearer_token;
+
+    #[test]
+    fn test_resolve_bearer_token_prefers_inline_else_reads_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let tok_path = dir.path().join("token");
+        std::fs::write(&tok_path, "  secret-file-token\n").unwrap();
+
+        let from_file = resolve_bearer_token(None, Some(&tok_path)).unwrap();
+        assert_eq!(from_file.as_deref(), Some("secret-file-token"));
+
+        let inline_wins =
+            resolve_bearer_token(Some("inline-tok".to_string()), Some(&tok_path)).unwrap();
+        assert_eq!(inline_wins.as_deref(), Some("inline-tok"));
+
+        let empty_path = dir.path().join("empty");
+        std::fs::write(&empty_path, "   \n").unwrap();
+        assert!(resolve_bearer_token(None, Some(&empty_path)).is_err());
+    }
+}

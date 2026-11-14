@@ -58,6 +58,10 @@ struct Args {
     #[arg(long, env = "DTN_HDY_TOKEN")]
     token: Option<String>,
 
+    /// Path to a file containing the Bearer authentication token (0600 recommended)
+    #[arg(long = "token-file", value_name = "FILE")]
+    token_file: Option<std::path::PathBuf>,
+
     /// Optional Unix Domain Socket path for connecting to a protected local BPA
     #[arg(long, env = "DTN_HDY_SOCKET")]
     socket: Option<String>,
@@ -71,6 +75,7 @@ struct TriggerApp {
     keystore: KeyStore,
     policy: VerifyPolicy,
     shutting_down: std::sync::atomic::AtomicBool,
+    exec_semaphore: Arc<tokio::sync::Semaphore>,
 }
 
 fn write_temp_file(data: &[u8], verbose: bool) -> anyhow::Result<NamedTempFile> {
@@ -83,7 +88,7 @@ fn write_temp_file(data: &[u8], verbose: bool) -> anyhow::Result<NamedTempFile> 
     Ok(data_file)
 }
 
-fn execute_cmd(
+async fn execute_cmd(
     command: &str,
     data_file: NamedTempFile,
     source: &str,
@@ -91,13 +96,14 @@ fn execute_cmd(
 ) -> anyhow::Result<()> {
     let fname_param = format!("{}", data_file.path().display());
 
-    let mut cmd = std::process::Command::new("/bin/sh");
+    let mut cmd = tokio::process::Command::new("/bin/sh");
     cmd.arg("-c");
     let full_script = format!("{} \"$1\" \"$2\"", command);
     cmd.arg(full_script);
     cmd.arg("--"); // placeholder for $0
     cmd.arg(source);
     cmd.arg(&fname_param);
+    cmd.kill_on_drop(true);
 
     if verbose {
         eprintln!(
@@ -106,7 +112,9 @@ fn execute_cmd(
         );
     }
 
-    let output = cmd.output()?;
+    let output = tokio::time::timeout(std::time::Duration::from_secs(60), cmd.output())
+        .await
+        .map_err(|_| anyhow::anyhow!("Trigger command timed out after 60s"))??;
 
     if !output.status.success() || verbose {
         eprintln!("[*] status: {}", output.status);
@@ -223,9 +231,17 @@ impl BpaService for TriggerApp {
                 }
             };
 
-            // Run command in spawn_blocking to avoid blocking the async executor thread
-            tokio::task::spawn_blocking(move || {
-                if let Err(e) = execute_cmd(&command_str, data_file, &source_str, verbose) {
+            // Run command asynchronously under concurrency bound & timeout
+            let Ok(permit) = self.exec_semaphore.clone().try_acquire_owned() else {
+                eprintln!(
+                    "[!] Dropping trigger command execution for {}: concurrency limit reached",
+                    source
+                );
+                return Ok(());
+            };
+            tokio::spawn(async move {
+                let _permit = permit;
+                if let Err(e) = execute_cmd(&command_str, data_file, &source_str, verbose).await {
                     eprintln!("[!] Error executing command: {}", e);
                 }
             });
@@ -267,8 +283,12 @@ async fn main() -> anyhow::Result<()> {
 
     let policy = args.verify_policy;
 
-    let (remote_bpa, _grpc_guard) =
-        dtnpm_core::create_remote_bpa(&grpc_addr, args.token.as_deref(), args.socket.as_deref())?;
+    let resolved_token = dtnpm::resolve_bearer_token(args.token, args.token_file.as_deref())?;
+    let (remote_bpa, _grpc_guard) = dtnpm_core::create_remote_bpa(
+        &grpc_addr,
+        resolved_token.as_deref(),
+        args.socket.as_deref(),
+    )?;
     let app = Arc::new(TriggerApp {
         sink: OnceCell::new(),
         verbose: args.verbose,
@@ -277,6 +297,7 @@ async fn main() -> anyhow::Result<()> {
         keystore,
         policy,
         shutting_down: std::sync::atomic::AtomicBool::new(false),
+        exec_semaphore: Arc::new(tokio::sync::Semaphore::new(8)),
     });
 
     let service_id = if let Ok(num) = args.endpoint.parse::<u32>() {
@@ -326,19 +347,19 @@ mod tests {
         Ok(())
     }
 
-    #[test]
-    fn test_execute_cmd_success() -> anyhow::Result<()> {
+    #[tokio::test]
+    async fn test_execute_cmd_success() -> anyhow::Result<()> {
         let temp = write_temp_file(b"test data", false)?;
         // We will run a command like "true" which exits with 0
-        let status = execute_cmd("true", temp, "dtn://source", false);
+        let status = execute_cmd("true", temp, "dtn://source", false).await;
         assert!(status.is_ok());
         Ok(())
     }
 
-    #[test]
-    fn test_execute_cmd_with_quotes() -> anyhow::Result<()> {
+    #[tokio::test]
+    async fn test_execute_cmd_with_quotes() -> anyhow::Result<()> {
         let temp = write_temp_file(b"test data", false)?;
-        let status = execute_cmd("echo 'hello world'", temp, "dtn://source", false);
+        let status = execute_cmd("echo 'hello world'", temp, "dtn://source", false).await;
         assert!(status.is_ok());
         Ok(())
     }

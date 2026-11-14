@@ -7,6 +7,9 @@ on:
       - "v*"
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 env:
   CARGO_TERM_COLOR: always
 
@@ -15,11 +18,17 @@ jobs:
     name: Build Embedded Preact WebUI
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout dtnpm-web-core
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: dtn-postmaster/dtnpm-web-core
+          path: dtn-postmaster/dtnpm-web-core
+      - name: Checkout dtnpm
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           path: dtn-postmaster/dtnpm
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: "22"
           cache: "pnpm"
@@ -29,7 +38,7 @@ jobs:
         run: |
           pnpm install --frozen-lockfile
           pnpm build
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: web-dist
           path: dtn-postmaster/dtnpm-web-core/ui/dist
@@ -64,24 +73,75 @@ jobs:
             archive_ext: tar.gz
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout Hardy DTN workspace
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: ricktaylor/hardy
+          path: hardy
+      - name: Checkout hqfbp-rs
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: loic-fejoz/hqfbp-rs
+          path: hqfbp-rs
+      - name: Checkout dtnpm-core
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: dtn-postmaster/dtnpm-core
+          path: dtn-postmaster/dtnpm-core
+      - name: Checkout dtnpm-web-core
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: dtn-postmaster/dtnpm-web-core
+          path: dtn-postmaster/dtnpm-web-core
+      - name: Checkout dtnpm-cla-ltp-kiss
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: dtn-postmaster/dtnpm-cla-ltp-kiss
+          path: dtn-postmaster/dtnpm-cla-ltp-kiss
+      - name: Checkout dtnpm-cla-hqfbp-kiss
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: dtn-postmaster/dtnpm-cla-hqfbp-kiss
+          path: dtn-postmaster/dtnpm-cla-hqfbp-kiss
+      - name: Checkout dtnpm-cla-mercury-arq
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: dtn-postmaster/dtnpm-cla-mercury-arq
+          path: dtn-postmaster/dtnpm-cla-mercury-arq
+      - name: Checkout dtnpm-mod-chat
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: dtn-postmaster/dtnpm-mod-chat
+          path: dtn-postmaster/dtnpm-mod-chat
+      - name: Checkout dtnpm-mod-files
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: dtn-postmaster/dtnpm-mod-files
+          path: dtn-postmaster/dtnpm-mod-files
+      - name: Checkout dtnpm-mod-senml
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: dtn-postmaster/dtnpm-mod-senml
+          path: dtn-postmaster/dtnpm-mod-senml
+      - name: Checkout dtnpm
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           path: dtn-postmaster/dtnpm
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: web-dist
           path: dtn-postmaster/dtnpm-web-core/ui/dist
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
         with:
           targets: ${{ matrix.name == 'macos-universal' && 'x86_64-apple-darwin,aarch64-apple-darwin' || matrix.target }}
 
       - name: Install cargo-zigbuild
         if: matrix.use_zigbuild
-        uses: taiki-e/install-action@cargo-zigbuild
+        uses: taiki-e/install-action@fa5c9474ee639e735adbd1fd9d0ae24a5309bcf0 # cargo-zigbuild
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           workspaces: dtn-postmaster/dtnpm
 
@@ -103,7 +163,7 @@ jobs:
           cargo build --release --target aarch64-apple-darwin
           mkdir -p target/universal-apple-darwin/release
           for bin in dtnpm dtnbib dtnfiles dtnforward dtnping dtnprint dtnquery dtnsend dtntrigger hdy-stats; do
-            lipo -create               target/x86_64-apple-darwin/release/$bin               target/aarch64-apple-darwin/release/$bin               -output target/universal-apple-darwin/release/$bin
+            lipo -create target/x86_64-apple-darwin/release/$bin target/aarch64-apple-darwin/release/$bin -output target/universal-apple-darwin/release/$bin
           done
 
       - name: Package archive (Unix)
@@ -115,7 +175,8 @@ jobs:
           for bin in dtnpm dtnbib dtnfiles dtnforward dtnping dtnprint dtnquery dtnsend dtntrigger hdy-stats; do
             cp "target/${{ matrix.target }}/release/$bin" "$PKG_DIR/"
           done
-          cp config.example.yaml config.example.toml dtnpm.service dtn-hdy-ham.service README.md LICENSE.md "$PKG_DIR/"
+          cp config.example.yaml config.example.toml dtnpm.service dtn-hdy-ham.service README.md LICENSE.md SECURITY.md "$PKG_DIR/"
+          cp -r examples "$PKG_DIR/"
           tar czf "${PKG_DIR}.tar.gz" "$PKG_DIR"
 
       - name: Package archive (Windows)
@@ -128,28 +189,101 @@ jobs:
           foreach ($bin in @("dtnpm.exe", "dtnbib.exe", "dtnfiles.exe", "dtnforward.exe", "dtnping.exe", "dtnprint.exe", "dtnquery.exe", "dtnsend.exe", "dtntrigger.exe", "hdy-stats.exe")) {
             Copy-Item "target/${{ matrix.target }}/release/$bin" "$pkgDir/"
           }
-          Copy-Item config.example.yaml, config.example.toml, README.md, LICENSE.md "$pkgDir/"
+          Copy-Item config.example.yaml, config.example.toml, README.md, LICENSE.md, SECURITY.md "$pkgDir/"
+          Copy-Item -Recurse examples "$pkgDir/examples"
           Compress-Archive -Path $pkgDir -DestinationPath "${pkgDir}.zip" -Force
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: release-${{ matrix.name }}
           path: dtn-postmaster/dtnpm/dtnpm-${{ matrix.name }}.${{ matrix.archive_ext }}
 
+  sbom:
+    name: Generate Release CycloneDX SBOM
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Hardy DTN workspace
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: ricktaylor/hardy
+          path: hardy
+      - name: Checkout hqfbp-rs
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: loic-fejoz/hqfbp-rs
+          path: hqfbp-rs
+      - name: Checkout dtnpm-core
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: dtn-postmaster/dtnpm-core
+          path: dtn-postmaster/dtnpm-core
+      - name: Checkout dtnpm-web-core
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: dtn-postmaster/dtnpm-web-core
+          path: dtn-postmaster/dtnpm-web-core
+      - name: Checkout dtnpm-cla-ltp-kiss
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: dtn-postmaster/dtnpm-cla-ltp-kiss
+          path: dtn-postmaster/dtnpm-cla-ltp-kiss
+      - name: Checkout dtnpm-cla-hqfbp-kiss
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: dtn-postmaster/dtnpm-cla-hqfbp-kiss
+          path: dtn-postmaster/dtnpm-cla-hqfbp-kiss
+      - name: Checkout dtnpm-cla-mercury-arq
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: dtn-postmaster/dtnpm-cla-mercury-arq
+          path: dtn-postmaster/dtnpm-cla-mercury-arq
+      - name: Checkout dtnpm-mod-chat
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: dtn-postmaster/dtnpm-mod-chat
+          path: dtn-postmaster/dtnpm-mod-chat
+      - name: Checkout dtnpm-mod-files
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: dtn-postmaster/dtnpm-mod-files
+          path: dtn-postmaster/dtnpm-mod-files
+      - name: Checkout dtnpm-mod-senml
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: dtn-postmaster/dtnpm-mod-senml
+          path: dtn-postmaster/dtnpm-mod-senml
+      - name: Checkout dtnpm
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          path: dtn-postmaster/dtnpm
+      - name: Generate CycloneDX SBOM
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0
+        with:
+          path: dtn-postmaster/dtnpm
+          output-file: dtn-postmaster/dtnpm/sbom.cdx.json
+          format: cyclonedx-json
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: release-sbom
+          path: dtn-postmaster/dtnpm/sbom.cdx.json
+
   publish-release:
     name: Publish GitHub Release
-    needs: package
+    needs: [package, sbom]
     if: startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           path: artifacts
           merge-multiple: true
+      - name: Generate SHA256SUMS
+        working-directory: artifacts
+        run: sha256sum * > SHA256SUMS
       - name: Publish Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626b5b8d85266b0e65 # v2
         with:
           generate_release_notes: true
           files: artifacts/*

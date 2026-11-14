@@ -7,7 +7,7 @@ use hardy_bpa::bpa::BpaRegistration;
 use hardy_bpa::services::{Service as BpaService, ServiceSink, StatusNotify};
 use hardy_bpv7::builder::Builder;
 use hardy_bpv7::creation_timestamp::CreationTimestamp;
-use hardy_bpv7::eid::{Eid, Service};
+use hardy_bpv7::eid::{Eid, NodeId, Service};
 use rusqlite::Connection;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -58,13 +58,36 @@ struct Args {
     #[arg(short = 'S', long)]
     show: bool,
 
+    /// Allow replying to third-party report_to EIDs instead of source node authority
+    #[arg(long = "allow-third-party-report-to")]
+    allow_third_party_report_to: bool,
+
     /// Optional Bearer authentication token for protected gRPC BPA endpoints
     #[arg(long, env = "DTN_HDY_TOKEN")]
     token: Option<String>,
 
+    /// Path to a file containing the Bearer authentication token (0600 recommended)
+    #[arg(long = "token-file", value_name = "FILE")]
+    token_file: Option<PathBuf>,
+
     /// Optional Unix Domain Socket path for connecting to a protected local BPA
     #[arg(long, env = "DTN_HDY_SOCKET")]
     socket: Option<String>,
+}
+
+fn validate_journald_unit(unit: &str) -> Result<()> {
+    if unit.is_empty()
+        || unit.starts_with('-')
+        || !unit
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-' | '@'))
+    {
+        anyhow::bail!(
+            "Invalid --journald-unit '{}': allowed characters are [A-Za-z0-9_.@-] without leading '-'",
+            unit
+        );
+    }
+    Ok(())
 }
 
 // Database helper
@@ -236,6 +259,7 @@ struct StatsApp {
     sink: OnceCell<Arc<Box<dyn ServiceSink>>>,
     endpoint: OnceCell<Eid>,
     verbose: bool,
+    allow_third_party_report_to: bool,
 }
 
 #[async_trait]
@@ -278,11 +302,23 @@ impl BpaService for StatsApp {
         };
         let request_bundle = parsed.bundle;
 
-        // Prioritize report_to, then source
+        // Prioritize report_to only if explicitly allowed or matching source node authority
         let reply_dest = if let Eid::Null = request_bundle.primary.report_to {
             request_bundle.primary.id.source.clone()
-        } else {
+        } else if self.allow_third_party_report_to {
             request_bundle.primary.report_to.clone()
+        } else {
+            let report_node = NodeId::try_from(request_bundle.primary.report_to.clone()).ok();
+            let source_node = NodeId::try_from(request_bundle.primary.id.source.clone()).ok();
+            if report_node.is_some() && report_node == source_node {
+                request_bundle.primary.report_to.clone()
+            } else {
+                eprintln!(
+                    "Ignoring third-party report_to {} (source: {}); pass --allow-third-party-report-to to permit",
+                    request_bundle.primary.report_to, request_bundle.primary.id.source
+                );
+                request_bundle.primary.id.source.clone()
+            }
         };
 
         if let Eid::Null = reply_dest {
@@ -599,6 +635,10 @@ async fn main() -> Result<()> {
         return Ok(());
     }
 
+    if args.log_file.is_none() {
+        validate_journald_unit(&args.journald_unit)?;
+    }
+
     // gRPC address setup
     let localhost = if args.ipv6 { "[::1]" } else { "127.0.0.1" };
     let port_str = resolve_grpc_port(args.port);
@@ -608,13 +648,19 @@ async fn main() -> Result<()> {
         eprintln!("Connecting to Hardy BPA at {}", grpc_addr);
     }
 
-    let (remote_bpa, _grpc_guard) =
-        dtnpm_core::create_remote_bpa(&grpc_addr, args.token.as_deref(), args.socket.as_deref())?;
+    let resolved_token =
+        dtnpm::resolve_bearer_token(args.token.clone(), args.token_file.as_deref())?;
+    let (remote_bpa, _grpc_guard) = dtnpm_core::create_remote_bpa(
+        &grpc_addr,
+        resolved_token.as_deref(),
+        args.socket.as_deref(),
+    )?;
     let app = Arc::new(StatsApp {
         db: db.clone(),
         sink: OnceCell::new(),
         endpoint: OnceCell::new(),
         verbose: args.verbose,
+        allow_third_party_report_to: args.allow_third_party_report_to,
     });
 
     let service_id = if let Ok(num) = args.service.parse::<u32>() {
@@ -707,5 +753,15 @@ mod tests {
             .expect("test_tail_file_rotation timed out (potential deadlock)");
 
         handle.abort();
+    }
+
+    #[test]
+    fn test_validate_journald_unit_rejects_flags_and_shell_metachars() {
+        assert!(validate_journald_unit("hardy-bpa").is_ok());
+        assert!(validate_journald_unit("dtnpm@f4abc.service").is_ok());
+        assert!(validate_journald_unit("-u").is_err());
+        assert!(validate_journald_unit("--exec=evil").is_err());
+        assert!(validate_journald_unit("").is_err());
+        assert!(validate_journald_unit("hardy;id").is_err());
     }
 }

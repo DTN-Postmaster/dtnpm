@@ -23,7 +23,6 @@ cli = [
     "dep:reqwest",
     "dep:rustls",
     "dep:rustls-pki-types",
-    "dep:sha1",
     "dep:sha2",
     "dep:sqlx",
     "dep:tokio-rustls",
@@ -156,7 +155,6 @@ regex = { version = "1", optional = true }
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"], optional = true }
 rustls = { version = "0.23", optional = true }
 rustls-pki-types = { version = "1", optional = true }
-sha1 = { version = "0.10", optional = true }
 sha2 = { version = "0.10", optional = true }
 sqlx = { version = "0.9", default-features = false, features = ["postgres", "runtime-tokio", "macros", "time"], optional = true }
 tokio-rustls = { version = "0.26", optional = true }
