@@ -1,68 +1,76 @@
-# System Architecture & Data Flow
+# Architecture Système & Flux de Données — `dtnpm`
 
-This document outlines the core architecture and registration patterns of the `dtn-hdy-utils` tools and how they interact with the Hardy BPA.
+Ce document détaille l'architecture modulaire de `dtnpm`, sa passerelle de sécurité gRPC, ainsi que les flux de données entre le démon BPA et les utilitaires satellites.
 
-## Integration & Network Layer
-Both utilities communicate with the local `hardy` BPA instance using the gRPC services defined in the Hardy proto definitions (see [service.proto](../../hardy/proto/service.proto) for details). Communication is routed through the gRPC client wrapper `RemoteBpa` provided by the `hardy-proto` crate.
+---
+
+## 1. Vue d'Ensemble & Architecture Réseau
+
+`dtnpm` s'interface avec le moteur BPA `hardy` via deux mécanismes complémentaires :
+1. **Passerelle d'enregistrement gRPC sécurisée** (`GrpcRegistrationGate`) :
+   - Expose une interface gRPC sur port local ou via socket UNIX dédiée (`/run/dtnpm/dtnpm.sock`).
+   - Assure l'absence de course TOCTOU en liant le socket immédiatement au démarrage et en bloquant les enregistrements non autorisés tant que l'authentification et l'initialisation ne sont pas achevées.
+2. **Couche Web & Ingestion de Bundles** :
+   - `WebBundleInjector` enregistre un pseudo-CLA en interne pour injecter directement les bundles en provenance des WebModules (`mod-chat`, `mod-files`, `mod-senml`) dans le pipeline BPA.
 
 ```mermaid
 graph TD
-    ClientApp["dtnprint / dtnsend / dtntrigger / dtnping / dtnfiles"] -->|gRPC Client Wrapper| RemoteBpa[RemoteBpa]
-    RemoteBpa -->|gRPC over HTTP/2| HardyBPA[Hardy BPA Daemon]
+    subgraph Clients["Clients CLI & Externes"]
+        CLI["dtnprint / dtnsend / dtnping / ..."]
+        Basket["dtnbasket-cli"]
+    end
+
+    subgraph Daemon["dtnpm Daemon (Serveur Hardy BPA)"]
+        Gate["GrpcRegistrationGate / Socket UNIX"]
+        BPA["Hardy BPA Core Pipeline"]
+        WebCore["dtnpm-web-core (Axum / IAM)"]
+        Modules["Modules: Chat / Files / Senml"]
+        CLAs["CLAs: LTP / HQFBP / Mercury / TCPCL"]
+    end
+
+    CLI -->|gRPC sécurisé / Token| Gate
+    Basket -->|gRPC sécurisé / Token| Gate
+    Gate --> BPA
+    WebCore --> Modules
+    Modules -->|WebBundleInjector| BPA
+    BPA <--> CLAs
 ```
 
-## Binary Architectures
+---
 
-### 1. The Receiver Utility (`dtnprint`)
-- Registers an endpoint service with the BPA asynchronously by implementing the low-level `BpaService` trait from the `hardy-bpa` crate.
-- By using `register_service`, it receives raw CBOR bundles directly from the BPA, enabling verification of BPSec Block Integrity Blocks (BIB).
-- The `on_receive` handler verifies signatures against the local keystore, enforces policy (`strict`, `warn`, or `ignore`), formats the payload, and outputs it atomically to `stdout`.
+## 2. Binaires CLI & Spécificités d'Ingénierie
 
-### 2. The Sender Utility (`dtnsend`)
-- Establishes a transient stream connection to the BPA by implementing the `Cla` trait and registering dynamically as a convergence layer adapter (CLA) over gRPC. See the definition of `SenderCla` and its registration in [dtnsend.rs](../src/bin/dtnsend.rs).
-- Constructs the raw Bundle Protocol version 7 (BPv7) bundle locally using the `hardy-bpv7` builder API, specifying any desired source EID.
-- Applies BPSec BIB HMAC-SHA256 signatures locally if signing keys are provided.
-- Calls `Cla::Sink::dispatch` to inject the raw bundle bytes directly into the BPA's ingress pipeline. Because the bundle arrives via a CLA (simulating network ingress), the BPA bypasses the local service source EID spoofing checks, allowing loopback and echo testing scenarios.
-- **Dry-run Mode (`-D`)**: Does not connect to the network. Instead, it utilizes the builder and timestamp abstractions in the `hardy-bpv7` library to construct the bundle local structure, serialize it to CBOR, and print it to stdout.
+### 1. Le Démon Principal (`dtnpm`)
+- Intègre le BPA `hardy`, l'authentification locale PBAC, le gestionnaire de CLA et le serveur Web.
+- Gère la configuration par défaut avec permissions Unix `0600` via l'assistant `wizard`.
 
-### 3. The Query Utility (`dtnquery`)
-- Interacts with the node storage offline by directly reading from the SQLite metadata database (`metadata.db`) or PostgreSQL database.
-- Parsed configurations are loaded dynamically to extract configured `node-ids` and determine the active storage backend.
-- Computes pending/waiting bundle structures and outputs offline stats mirroring the `dtn7-rs` `dtnquery` interface. For details, see [dtnquery.rs](../src/bin/dtnquery.rs).
+### 2. Le Récepteur d'Impression (`dtnprint`)
+- S'enregistre en tant que service auprès du BPA.
+- Reçoit les bundles CBOR bruts, vérifie l'intégrité BPSec (BIB) et écrit le contenu atomiquement sur `stdout`.
 
-### 4. The Trigger Utility (`dtntrigger`)
-- Registers an endpoint service dynamically on the running Hardy BPA daemon using `register_service` to receive raw CBOR bundles.
-- Verifies BPSec signatures on incoming bundles according to the configured keystore and verify policy.
-- Listens to incoming bundle payloads:
-  - If `--print` is enabled, formats the incoming payload inline to stdout.
-  - Otherwise, writes the payload bytes safely to a named temporary file (`tempfile::NamedTempFile`) and spawns a background command, passing `<source_eid>` and `<temp_file_path>` as parameters, cleaning up the temp file automatically upon process exit. For details, see [dtntrigger.rs](../src/bin/dtntrigger.rs).
+### 3. L'Émetteur (`dtnsend`)
+- Enregistre dynamiquement un CLA éphémère auprès du BPA pour injecter des bundles sans restriction d'adresse source.
+- Prend en charge la signature BPSec (HMAC-SHA256 ou Ed25519) et le mode simulation hors-ligne (`-D / --dry-run`).
 
-### 5. The Ping Utility (`dtnping`)
-- Connects as a client to the running local Hardy BPA instance via gRPC using `RemoteBpa`.
-- Registers itself as a service using `register_service` (dynamically generating a client-side ephemeral service EID like `dtnping-<pid>` if no custom source EID is specified via `-S`).
-- Builds ping bundles locally, optionally signing them with HMAC-SHA256, and dispatches them via `ServiceSink::send`.
-- Performs signature verification on incoming ping reply bundles (pongs) in `on_receive`.
-- Tracks RTTs locally and prints progress and final statistics. Status reports are parsed to show routing path transitions in real time. For details, see [dtnping.rs](../src/bin/dtnping.rs).
+### 4. L'Outil d'Interrogation du Stockage (`dtnquery`)
+- Accède hors-ligne directement aux métadonnées SQLite (`metadata.db`) ou PostgreSQL.
+- Utilise des requêtes avec pushdown SQL (`LIKE ... ESCAPE` et `LIMIT`) pour éviter de charger en mémoire l'intégralité des bundles lors du filtrage par adresse ou du calcul des statistiques globales.
 
-### 6. The Files Utility (`dtnfiles`)
-- Registers as an endpoint service named `/files` on the Hardy BPA daemon.
-- Receives incoming bundles and parses the payload.
-- Automatically determines file extension by inspecting magic bytes of the payload (matching image, audio, or text formats recognized out of the box).
-- Saves the extracted payload to the specified directory with a filename derived from the bundle ID and the detected file extension. For details, see [dtnfiles.rs](../src/bin/dtnfiles.rs).
+### 5. Le Déclencheur Événementiel (`dtntrigger`)
+- Réceptionne les bundles sur un endpoint dédié, vérifie la signature BPSec, écrit le payload dans un fichier temporaire sécurisé (`NamedTempFile`), et exécute la commande configurée sans passer par un interpréteur shell non contrôlé.
 
-### 7. The Forwarder Utility (`dtnforward`)
-- Registers as an endpoint service on the Hardy BPA daemon to listen for incoming bundles on a specified service (e.g. `dtn://f4jxq/chat`).
-- Verifies the signature of the incoming (inner) bundle against the keystore according to the configured verify policy.
-- To prevent infinite forwarding loops, inspects the payload to verify that the nesting depth does not exceed `--max-depth`.
-- Dynamically registers a convergence layer adapter (CLA) at startup to bypass source EID spoofing checks.
-- Wraps the incoming bundle inside an outer bundle (Bundle-in-Bundle Encapsulation, BIBE) with the target destination and sender EID.
-- Signs the outer bundle if a signing key is configured, and dispatches the outer bundle via the CLA sink. For details, see [dtnforward.rs](../src/bin/dtnforward.rs).
+### 6. L'Outil de Diagnostic (`dtnping`)
+- Émet des requêtes d'écho DTN avec horodatage et calcule les temps d'aller-retour (RTT).
+- Borne sa table de suivi à 10 000 entrées pour prévenir toute fuite mémoire.
 
-### 8. The Decapsulator Utility (`dtnbib`)
-- Registers as an endpoint service on the Hardy BPA daemon (usually `/bibe`, e.g. `dtn://f4jxq-2/bibe`) to receive incoming outer BIBE bundles.
-- Decapsulates the outer bundle payload, parsing it as a standard BIBE PDU (Administrative Record 64443) with a zero-copy fallback to a raw inner bundle representation.
-- Verifies the cryptographic BPSec signature of the original inner bundle against the keystore.
-- Rewrites the destination EID of the inner bundle according to EID alias mapping rules (e.g. replacing `dtn://f4jxq/` with the local node EID `dtn://f4jxq-2/`), which allows local delivery while preventing infinite routing loops.
-- **Signature Preservation (Gateway Mode)**: Since EID rewriting breaks the original signature of the inner bundle, if the original signature was verified as valid, `dtnbib` strips it and re-signs the rewritten inner bundle using the local node's signing key (`--sign-key`) before re-injecting. Unsigned or invalid bundles are never re-signed.
-- Re-injects the final (rewritten and optionally re-signed) inner bundle back into the local Hardy BPA via a dynamically registered CLA so it is routed and delivered locally. For details, see [dtnbib.rs](../src/bin/dtnbib.rs).
+### 7. Le Récepteur de Fichiers (`dtnfiles`)
+- Sauvegarde les fichiers reçus après contrôle de quota préalable, assainissement strict du nom de fichier (128 caractères alphanumériques et tirets) et écriture asynchrone non bloquante.
 
+### 8. L'Encapsuleur BIBE (`dtnforward` / `dtnbib`)
+- Encapsule les bundles entrants dans des bundles externes (BIBE - RFC 5050 / RFC 9171).
+- Détermine avec précision si la destination est locale via comparaison des autorités de nœuds (`NodeId`).
+
+### 9. Le Collecteur de Métriques (`hdy-stats`)
+- Surveille l'état du démon via journald ou lecture de fichier de log.
+- Restreint l'autorité du destinataire des rapports (`report_to`) au nœud émetteur sauf autorisation explicite via `--allow-third-party-report-to`.
+- Valide le nom de l'unité journald via une expression régulière stricte pour prévenir toute injection d'options.

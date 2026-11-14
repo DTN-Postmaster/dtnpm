@@ -53,6 +53,15 @@ cargo check --no-default-features --features "webui-remote,cli"
 
 - Example configurations: [config.example.yaml](config.example.yaml), [config.example.toml](config.example.toml), and [`examples/`](examples/)
 - Architecture notes and ADRs: [`adr/`](adr/) and [`docs/`](docs/)
+- Agent development guide: [`AGENTS.md`](AGENTS.md) and [`agent_docs/`](agent_docs/)
+- Security policy & vulnerability reporting: [`SECURITY.md`](SECURITY.md)
+
+## Security & Compliance Frameworks
+
+- **Cyber Resilience Act (CRA)**: Secure-by-default posture, zero secret exposure in `/proc/<pid>/cmdline` (`--token-file`, `--password-stdin`), least-privilege systemd units with kernel/filesystem sandboxing, CycloneDX SBOM generation, and cryptographic SHA-1 40-char pinned CI workflows.
+- **OWASP Top 10 / ASVS**: PBAC role-based access control, gRPC registration gate protecting against TOCTOU race conditions, strict host/CORS isolation, and safe process spawning (`kill_on_drop`, non-shell vector arguments).
+- **BPSec (RFC 9172) & BPv7 (RFC 9171)**: Mandatory cryptographic signature verification by default under `VerifyPolicy::Strict`. Unauthenticated or degraded modes require explicit user opt-in flags (e.g. `--allow-unauthenticated-udp`, `--allow-unidentified-rf`, `--allow-third-party-report-to`).
+- **Rust Quality Standards**: Zero-unwrap and zero-panic rule in production binaries and libraries (`-D clippy::unwrap_used -D clippy::panic`).
 
 ## License
 

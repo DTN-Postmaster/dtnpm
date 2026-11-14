@@ -1,43 +1,56 @@
-# Testing Guidelines
+# Guide de Test et d'Assurance Qualité — `dtnpm`
 
-This document provides a guide on how to write, mock, and run tests for the `dtn-hdy-utils` project.
+Ce document présente la stratégie de test, la validation hors-ligne, les garde-fous de sécurité et la mesure de couverture pour le projet `dtnpm`.
 
-## Integration Testing
-- Integration tests can verify end-to-end delivery by launching receiver utilities (`dtnprint`, `dtntrigger`, `dtnfiles`) and sender/diagnostic utilities (`dtnsend`, `dtnping`) against a local running Hardy BPA instance.
-- To confirm successful registration and dynamic endpoint generation, launch `dtnprint`, `dtntrigger`, or `dtnfiles` and parse the generated EID.
-- To send bundles to a specific endpoint, invoke `dtnsend` with a file or piped `stdin` payload.
-- To verify BPSec integrity checking, configure a local keystore file and invoke the utilities with the `--keystore` and `--verify-policy` options to ensure signature validity/failure drop behaviors match expectation.
-- Complete end-to-end integration tests are provided in the `examples/` directory:
-  - [`test_basket.py`](file:///home/loic/projets/dtn-hdy-utils/examples/test_basket.py): Verifies the basket service request/response cycle.
-  - [`test_forward.py`](file:///home/loic/projets/dtn-hdy-utils/examples/test_forward.py): Verifies the forwarding service (BIBE encapsulation) using `dtnforward`, `dtnsend`, and `dtntrigger`.
+---
 
-## Dry-run & Serialization Verification
-- Offline tests of bundle assembly can be validated using the dry-run path which creates a bundle via `hardy_bpv7::builder::Builder`.
-- Test assertions should verify that:
-- The generated EIDs are parsed correctly using the EID parsing methods.
-- The hexified CBOR output is valid according to the BPv7 specification (RFC 9171).
+## 1. Tests Unitaires & Intégrité Locale
 
-## Unit Testing
-- For BPSec security (`src/security.rs`), verify key format auto-detection, pattern matching, signing, and verification under different key scenarios (wrong key, missing key, unsigned).
-- For `dtnping`, verify duration parsing and CBOR encoding/decoding via unit tests defined in `src/bin/dtnping.rs`.
-- For `dtntrigger`, verify temporary file generation and execution of external commands.
-- For `dtnfiles`, verify auto file extension detection logic via unit tests in `src/bin/dtnfiles.rs`.
+- **Zéro dépendance réseau en test** : Toutes les suites de tests doivent être exécutables en mode déconnecté (`--offline`).
+- **Tests d'encodage/décodage CBOR & EID** : Valider que les identifiants d'endpoints (EID) et les blocs BPv7 (RFC 9171) sont fidèles aux spécifications et protégés contre les dépassements d'entiers ou les allocations non bornées.
+- **Vérification BPSec** :
+  - Tester les trois modes de politique (`Strict`, `Warn`, `Ignore`).
+  - Vérifier que sous `VerifyPolicy::Strict`, les bundles non signés (`Unsigned`), à clé introuvable (`MissingKey`) ou corrompus (`Invalid`) sont systématiquement rejetés.
+- **Sanitisation et bornes mémoires** :
+  - Valider l'assainissement des noms de fichiers dans `dtnfiles` (protection contre les chemins relatifs, caractères d'échappement, noms trop longs).
+  - Valider le filtrage par liste blanche des unités journald dans `hdy-stats` (rejet des tirets initiaux et métacaractères d'injection).
+  - Valider les requêtes avec filtre SQL `--addr` et `--limit` dans `dtnquery`.
 
-## Code Coverage
-To assess test coverage across all crates and components:
-- Run `./scripts/check-coverage.sh` for a full terminal report.
-- Run `./scripts/check-coverage.sh --summary-only` for an aggregated summary.
-- Run `./scripts/check-coverage.sh --html` to generate an interactive HTML report in `target/llvm-cov/html/index.html`.
-- Run `./scripts/check-coverage.sh --lcov` to export an LCOV tracefile (`lcov.info`) for CI pipelines.
-Coverage uses LLVM source-based instrumentation (`cargo-llvm-cov`), excluding fuzzing targets.
+---
 
-## Running Tests
-Always run the validation suite before delivering modifications:
-- Run `cargo test` to execute all defined test cases.
-- Run `cargo clippy && cargo fmt --check` to ensure the codebase remains clean and warning-free.
-- Run `./scripts/check-security.sh --strict` to verify security guardrails, dependencies, and license compliance.
-- Run `./scripts/check-coverage.sh --summary-only` to monitor test coverage regressions.
-- Ensure the `hardy` checkout `ref` in `.github/workflows/ci.yml` is updated whenever `hardy` dependencies, trait signatures, or patches evolve.
+## 2. Tests d'Intégration & Mocks de Services
 
+- Les tests d'intégration simulent les interactions réelles entre composants :
+  - **`iam_integration_test.rs`** : Valide le contrôle d'accès PBAC, la gestion des utilisateurs, les sessions, et l'enregistrement de services via la passerelle gRPC et socket UNIX.
+  - **`bpsec_chat_files_test.rs`** : Valide la chaîne complète de signature et vérification BPSec pour les modules Chat et Fichiers.
+  - **`ham_server_test.rs`** : Valide l'initialisation du serveur dtnpm avec différentes configurations TOML/YAML, la parité des configurations, et la gestion des CLAs.
+  - **`bundle_inspector_test.rs`** : Valide l'inspection des bundles en mémoire et sur disque SQLite.
+- Les tests asynchrones utilisent `tokio::test` avec des timeouts raisonnables pour éviter tout gel du banc de test.
 
+---
 
+## 3. Couverture de Code (`cargo-llvm-cov`)
+
+Pour surveiller l'absence de régression dans la couverture des tests :
+- Rapport console synthétique : `./scripts/check-coverage.sh --summary-only`
+- Rapport complet : `./scripts/check-coverage.sh`
+- Rapport HTML interactif : `./scripts/check-coverage.sh --html` (disponible sous `target/llvm-cov/html/index.html`)
+- Export CI : `./scripts/check-coverage.sh --lcov` (génère `lcov.info`)
+
+> [!NOTE]
+> Ne jamais commiter de fichier `lcov.info` ou `sbom.json` généré localement dans l'arbre de travail Git.
+
+---
+
+## 4. Matrice de Validation Pré-Livraison
+
+Avant de finaliser une tâche ou de créer un commit, exécuter obligatoirement :
+
+1. `cargo fmt --all -- --check`
+2. `cargo clippy --offline --workspace --lib --bins -- -D warnings -D clippy::unwrap_used -D clippy::panic`
+3. `cargo test --offline --all-targets`
+4. Profils spécifiques :
+   - `cargo check --offline --no-default-features --features "amsat"`
+   - `cargo check --offline --no-default-features --features "node-headless"`
+   - `cargo check --offline --no-default-features --features "webui-remote"`
+5. Audit de sécurité : `./scripts/check-security.sh --strict`
