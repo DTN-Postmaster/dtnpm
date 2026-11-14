@@ -1,0 +1,155 @@
+# Expects sibling dtnpm-* checkouts (`../dtnpm-*`), hardy (`../../hardy`), and hqfbp-rs (`../../hqfbp-rs`).
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build-web:
+    name: Build Embedded Preact WebUI
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: dtn-postmaster/dtnpm
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "pnpm"
+          cache-dependency-path: dtn-postmaster/dtnpm-web-core/ui/pnpm-lock.yaml
+      - name: Build Preact WebUI bundle
+        working-directory: dtn-postmaster/dtnpm-web-core/ui
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: web-dist
+          path: dtn-postmaster/dtnpm-web-core/ui/dist
+
+  package:
+    name: Package (${{ matrix.name }})
+    needs: build-web
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux-x86_64
+            os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            use_zigbuild: true
+            archive_ext: tar.gz
+          - name: linux-aarch64
+            os: ubuntu-latest
+            target: aarch64-unknown-linux-gnu
+            use_zigbuild: true
+            archive_ext: tar.gz
+          - name: windows-x86_64
+            os: windows-latest
+            target: x86_64-pc-windows-msvc
+            use_zigbuild: false
+            archive_ext: zip
+          - name: macos-universal
+            os: macos-latest
+            target: universal-apple-darwin
+            use_zigbuild: false
+            archive_ext: tar.gz
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: dtn-postmaster/dtnpm
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: web-dist
+          path: dtn-postmaster/dtnpm-web-core/ui/dist
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.name == 'macos-universal' && 'x86_64-apple-darwin,aarch64-apple-darwin' || matrix.target }}
+
+      - name: Install cargo-zigbuild
+        if: matrix.use_zigbuild
+        uses: taiki-e/install-action@cargo-zigbuild
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: dtn-postmaster/dtnpm
+
+      - name: Build binaries (Linux zigbuild)
+        if: matrix.use_zigbuild
+        working-directory: dtn-postmaster/dtnpm
+        run: cargo zigbuild --release --target ${{ matrix.target }}
+
+      - name: Build binaries (Windows)
+        if: matrix.name == 'windows-x86_64'
+        working-directory: dtn-postmaster/dtnpm
+        run: cargo build --release --target ${{ matrix.target }}
+
+      - name: Build binaries (macOS universal)
+        if: matrix.name == 'macos-universal'
+        working-directory: dtn-postmaster/dtnpm
+        run: |
+          cargo build --release --target x86_64-apple-darwin
+          cargo build --release --target aarch64-apple-darwin
+          mkdir -p target/universal-apple-darwin/release
+          for bin in dtnpm dtnbib dtnfiles dtnforward dtnping dtnprint dtnquery dtnsend dtntrigger hdy-stats; do
+            lipo -create               target/x86_64-apple-darwin/release/$bin               target/aarch64-apple-darwin/release/$bin               -output target/universal-apple-darwin/release/$bin
+          done
+
+      - name: Package archive (Unix)
+        if: matrix.archive_ext == 'tar.gz'
+        working-directory: dtn-postmaster/dtnpm
+        run: |
+          PKG_DIR="dtnpm-${{ matrix.name }}"
+          mkdir -p "$PKG_DIR"
+          for bin in dtnpm dtnbib dtnfiles dtnforward dtnping dtnprint dtnquery dtnsend dtntrigger hdy-stats; do
+            cp "target/${{ matrix.target }}/release/$bin" "$PKG_DIR/"
+          done
+          cp config.example.yaml config.example.toml dtnpm.service dtn-hdy-ham.service README.md LICENSE.md "$PKG_DIR/"
+          tar czf "${PKG_DIR}.tar.gz" "$PKG_DIR"
+
+      - name: Package archive (Windows)
+        if: matrix.archive_ext == 'zip'
+        working-directory: dtn-postmaster/dtnpm
+        shell: pwsh
+        run: |
+          $pkgDir = "dtnpm-${{ matrix.name }}"
+          New-Item -ItemType Directory -Force -Path $pkgDir | Out-Null
+          foreach ($bin in @("dtnpm.exe", "dtnbib.exe", "dtnfiles.exe", "dtnforward.exe", "dtnping.exe", "dtnprint.exe", "dtnquery.exe", "dtnsend.exe", "dtntrigger.exe", "hdy-stats.exe")) {
+            Copy-Item "target/${{ matrix.target }}/release/$bin" "$pkgDir/"
+          }
+          Copy-Item config.example.yaml, config.example.toml, README.md, LICENSE.md "$pkgDir/"
+          Compress-Archive -Path $pkgDir -DestinationPath "${pkgDir}.zip" -Force
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.name }}
+          path: dtn-postmaster/dtnpm/dtnpm-${{ matrix.name }}.${{ matrix.archive_ext }}
+
+  publish-release:
+    name: Publish GitHub Release
+    needs: package
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+      - name: Publish Release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: artifacts/*

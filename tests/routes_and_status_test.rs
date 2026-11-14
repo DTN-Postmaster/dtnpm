@@ -37,10 +37,7 @@ routes:
     server.bpa().start(false).await;
 
     let cla_manager = server.cla_manager();
-    let app = server
-        .create_web_router()
-        .await
-        .expect("web router builds");
+    let app = server.create_web_router().await.expect("web router builds");
 
     // 1. GET /api/v1/routes - initial route from config
     let req = Request::builder()
@@ -117,10 +114,7 @@ routes:
     // 4. Test GET /api/v1/clas/status
     let addr: std::net::SocketAddr = "44.27.131.233:4556".parse().unwrap();
     cla_manager
-        .set_peer_status(
-            addr,
-            dtnpm::cla_manager::PeerConnectionStatus::Connected,
-        )
+        .set_peer_status(addr, dtnpm::cla_manager::PeerConnectionStatus::Connected)
         .await;
 
     let req = Request::builder()

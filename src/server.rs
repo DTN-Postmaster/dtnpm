@@ -241,7 +241,9 @@ impl HamServer {
                                                     callsign: addr.to_string(),
                                                     node_id: None,
                                                     schedule,
-                                                    grace_period: std::time::Duration::from_secs(30),
+                                                    grace_period: std::time::Duration::from_secs(
+                                                        30,
+                                                    ),
                                                 };
                                                 coordinators.push(ContactCoordinator::new(
                                                     endpoint,
@@ -308,13 +310,14 @@ impl HamServer {
                         if let Some(ref sched) = p.schedule {
                             let schedule = match sched {
                                 ScheduleConfig::Recurring { cron, duration } => {
-                                    let cron_expr = dtnpm_core::coordinator::cron::CronExpr::parse(cron)
-                                        .map_err(|e| {
-                                            anyhow::anyhow!(
-                                                "Invalid cron for peer {}: {e}",
-                                                p.callsign
-                                            )
-                                        })?;
+                                    let cron_expr =
+                                        dtnpm_core::coordinator::cron::CronExpr::parse(cron)
+                                            .map_err(|e| {
+                                                anyhow::anyhow!(
+                                                    "Invalid cron for peer {}: {e}",
+                                                    p.callsign
+                                                )
+                                            })?;
                                     ContactSchedule::Recurring {
                                         cron: cron_expr,
                                         duration: *duration,
@@ -380,9 +383,7 @@ impl HamServer {
                     continue;
                 }
 
-                ClaType::Other {
-                    ref cla_type, ..
-                } => {
+                ClaType::Other { ref cla_type, .. } => {
                     #[cfg(feature = "cla-ltp")]
                     if cla_type == "ltp" {
                         let ltp_cfg = cla_config
@@ -493,6 +494,7 @@ impl HamServer {
     /// Returns the list of compiled-in [`WebModule`] plugins enabled by Cargo features.
     #[cfg(feature = "web-core")]
     #[must_use]
+    #[allow(clippy::vec_init_then_push)]
     pub fn web_modules(&self) -> Vec<Arc<dyn WebModule>> {
         let mut modules: Vec<Arc<dyn WebModule>> = Vec::new();
         #[cfg(feature = "mod-chat")]

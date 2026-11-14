@@ -25,7 +25,9 @@ pub use dtnpm_mod_chat::{self as mod_chat, ChatManager, ChatModule, ChatService}
 pub use dtnpm_mod_files::{self as mod_files, FileBundleRecord, FilesModule, FilesService};
 
 #[cfg(feature = "mod-senml")]
-pub use dtnpm_mod_senml::{self as mod_senml, SenmlManager, SenmlModule, SenmlService, SenmlStorage};
+pub use dtnpm_mod_senml::{
+    self as mod_senml, SenmlManager, SenmlModule, SenmlService, SenmlStorage,
+};
 
 #[cfg(feature = "node")]
 pub mod server;

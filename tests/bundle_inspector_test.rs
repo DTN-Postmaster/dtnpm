@@ -245,14 +245,12 @@ async fn test_in_memory_bundle_inspector_and_connect_peer() {
 
     config.clas.push(dtnpm::config::cla::ClaConfig {
         name: "tcpcl-stata".to_string(),
-        cla_type: dtnpm::config::cla::ClaType::TcpClv4(
-            dtnpm::config::cla::Tcpclv4HamConfig {
-                address: Some("127.0.0.1:0".parse().unwrap()),
-                require_tls: Some(false),
-                peers: Some(vec!["127.0.0.1:4559".to_string()]),
-                ..Default::default()
-            },
-        ),
+        cla_type: dtnpm::config::cla::ClaType::TcpClv4(dtnpm::config::cla::Tcpclv4HamConfig {
+            address: Some("127.0.0.1:0".parse().unwrap()),
+            require_tls: Some(false),
+            peers: Some(vec!["127.0.0.1:4559".to_string()]),
+            ..Default::default()
+        }),
         policy: None,
         schedule: None,
     });

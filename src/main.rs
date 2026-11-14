@@ -108,12 +108,15 @@ rfc9171-validity:
 "#;
 
 #[cfg(feature = "web-core")]
+#[allow(clippy::vec_init_then_push)]
 async fn run_remote_webui(config: HamConfig, grpc_url: String) -> anyhow::Result<()> {
     use dtnpm_core::{
         BpaClient, GrpcBpaClient, InternalStorage, ServiceTracker, cla_manager::ClaManager,
         routing::RouteManager, security::DirectionalKeyStore,
     };
-    use dtnpm_web_core::{ModuleContext, WebBundleInjector, WebModule, register_modules, start_web_server};
+    use dtnpm_web_core::{
+        ModuleContext, WebBundleInjector, WebModule, register_modules, start_web_server,
+    };
     use hardy_bpa::{bpa::BpaRegistration, cla::ClaInit};
     use std::sync::Arc;
 
@@ -239,7 +242,10 @@ async fn main() -> anyhow::Result<()> {
 
     #[cfg(feature = "node")]
     {
-        info!("Starting DTN Postmaster BPA with node-id: {}", config.node_id);
+        info!(
+            "Starting DTN Postmaster BPA with node-id: {}",
+            config.node_id
+        );
         let server = dtnpm::HamServer::new(config).await?;
         server.run().await?;
         return Ok(());

@@ -1,0 +1,24 @@
+[Unit]
+Description=DTN Postmaster (dtnpm) BPv7 Bundle Processing Node
+Documentation=https://github.com/dtn-postmaster/dtnpm
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/var/lib/dtnpm
+ExecStart=/usr/local/bin/dtnpm -c /etc/dtnpm/config.toml
+Restart=on-failure
+RestartSec=5s
+
+# Security hardening options
+ProtectSystem=full
+ProtectHome=read-only
+PrivateTmp=true
+
+# Resource limits
+LimitNOFILE=65535
+
+[Install]
+WantedBy=multi-user.target
