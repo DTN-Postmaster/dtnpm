@@ -241,14 +241,18 @@ async fn run_remote_webui(
     let bpa: Arc<dyn BpaClient> = grpc_bpa;
     let service_tracker = ServiceTracker::new(bpa_reg.clone());
     let injector = WebBundleInjector::new();
-    let _ = bpa_reg
+    bpa_reg
         .register_cla(
             "web-sender".to_string(),
             Arc::new(injector.clone()),
             None,
             ClaInit::default(),
         )
-        .await;
+        .await
+        .map_err(|e| {
+            tracing::error!("Failed to register web-sender CLA: {e}");
+            anyhow::anyhow!("Failed to register web-sender CLA: {e}")
+        })?;
 
     #[allow(unused_mut)]
     let mut modules: Vec<Arc<dyn WebModule>> = Vec::new();

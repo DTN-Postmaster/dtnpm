@@ -148,11 +148,35 @@ impl HamServer {
         ));
         builder = builder.routing_agent("ham_routes".to_string(), route_manager.clone());
 
+        #[cfg(feature = "mod-rego-routing")]
+        let rego_module = {
+            let rego_yaml = config.rego_routing.as_ref();
+            let rego_cfg = dtnpm_mod_rego_routing::RegoRoutingConfig {
+                local_eid: config.node_id.clone(),
+                node_eids: endpoints.iter().map(ToString::to_string).collect(),
+                callsign: config.callsign.clone(),
+                policy_dir: rego_yaml.and_then(|r| r.policy_dir.clone()),
+                custom_ingress_rego: rego_yaml.and_then(|r| r.custom_ingress_rego.clone()),
+                custom_egress_rego: rego_yaml.and_then(|r| r.custom_egress_rego.clone()),
+                custom_routing_rego: rego_yaml.and_then(|r| r.custom_routing_rego.clone()),
+                ..Default::default()
+            };
+            let module = Arc::new(
+                dtnpm_mod_rego_routing::RegoRoutingModule::with_config(rego_cfg)
+                    .context("Failed to initialize RegoRoutingModule")?,
+            );
+            builder =
+                builder.routing_agent("rego_routing".to_string(), module.routing_agent().clone());
+            module
+        };
+
         // 4. Configure CLAs
         let mut tcp_peers = Vec::new();
         let mut coordinators = Vec::new();
         for cla_config in config.clas.clone() {
-            let (cla, init): (Arc<dyn Cla>, ClaInit) = match cla_config.cla_type {
+            let (cla, init, cla_type_name): (Arc<dyn Cla>, ClaInit, &'static str) = match cla_config
+                .cla_type
+            {
                 ClaType::TcpClv4(tcp_cfg) => {
                     let mut b = hardy_tcpclv4::Tcpclv4::builder();
                     if let Some(listeners) = tcp_cfg.listeners {
@@ -268,7 +292,7 @@ impl HamServer {
                         }
                     }
 
-                    (cla, init)
+                    (cla, init, "tcpclv4")
                 }
 
                 #[cfg(feature = "cla-mercury")]
@@ -374,7 +398,7 @@ impl HamServer {
                         coordinators.push(ContactCoordinator::new(cla.clone(), targets));
                     }
 
-                    (cla, init)
+                    (cla, init, "mercury_arq")
                 }
 
                 #[cfg(not(feature = "cla-mercury"))]
@@ -386,9 +410,9 @@ impl HamServer {
                     continue;
                 }
 
-                ClaType::Other { ref cla_type, .. } => {
+                ClaType::Other { ref cla_type, .. } => match cla_type.as_str() {
                     #[cfg(feature = "cla-ltp")]
-                    if cla_type == "ltp" {
+                    "ltp" => {
                         let ltp_cfg = cla_config
                             .cla_type
                             .parse_as::<dtnpm_cla_ltp_kiss::Config>("ltp")
@@ -401,12 +425,10 @@ impl HamServer {
                         let cla = dtnpm_cla_ltp_kiss::LtpCla::new(ltp_cfg);
                         let init = cla.cla_init();
                         let cla: Arc<dyn Cla> = Arc::new(cla);
-                        builder = builder.cla(cla_config.name, cla, None, init);
-                        continue;
+                        (cla, init, "ltp")
                     }
-
                     #[cfg(feature = "cla-hqfbp")]
-                    if cla_type == "hqfbp" {
+                    "hqfbp" => {
                         let hqfbp_cfg = cla_config
                             .cla_type
                             .parse_as::<dtnpm_cla_hqfbp_kiss::Config>("hqfbp")
@@ -416,17 +438,25 @@ impl HamServer {
                         let cla = dtnpm_cla_hqfbp_kiss::HqfbpCla::new(hqfbp_cfg);
                         let init = cla.cla_init();
                         let cla: Arc<dyn Cla> = Arc::new(cla);
-                        builder = builder.cla(cla_config.name, cla, None, init);
+                        (cla, init, "hqfbp")
+                    }
+                    _ => {
+                        warn!(
+                            "Ignoring CLA '{}' with unsupported or disabled type '{}'",
+                            cla_config.name, cla_type
+                        );
                         continue;
                     }
-
-                    warn!(
-                        "Ignoring CLA '{}' with unsupported or disabled type '{}'",
-                        cla_config.name, cla_type
-                    );
-                    continue;
-                }
+                },
             };
+
+            #[cfg(feature = "mod-rego-routing")]
+            let cla: Arc<dyn Cla> = dtnpm_core::cla_observer::ObservedCla::wrap(
+                cla_config.name.clone(),
+                cla_type_name,
+                cla,
+                rego_module.engine().clone(),
+            );
 
             builder = builder.cla(cla_config.name, cla, None, init);
         }
@@ -463,20 +493,6 @@ impl HamServer {
             )));
             #[cfg(feature = "mod-rego-routing")]
             {
-                let rego_cfg = dtnpm_mod_rego_routing::RegoRoutingConfig {
-                    local_eid: config.node_id.clone(),
-                    node_eids: endpoints.iter().map(ToString::to_string).collect(),
-                    callsign: config.callsign.clone(),
-                    ..Default::default()
-                };
-                let rego_module = Arc::new(
-                    dtnpm_mod_rego_routing::RegoRoutingModule::with_config(rego_cfg)
-                        .context("Failed to initialize RegoRoutingModule")?,
-                );
-                builder = builder.routing_agent(
-                    "rego_routing".to_string(),
-                    rego_module.routing_agent().clone(),
-                );
                 modules.push(rego_module);
             }
             for module in &modules {

@@ -59,6 +59,7 @@ struct Args {
 
 struct PrintService {
     sink: OnceCell<Box<dyn ServiceSink>>,
+    disconnected: Arc<tokio::sync::Notify>,
     verbose: bool,
     keystore: KeyStore,
     policy: VerifyPolicy,
@@ -75,7 +76,7 @@ impl BpaService for PrintService {
 
     async fn on_unregister(&self) {
         eprintln!("Error: Service unregistered (connection lost). Exiting.");
-        std::process::exit(1);
+        self.disconnected.notify_one();
     }
 
     async fn on_deliver(
@@ -98,14 +99,18 @@ impl BpaService for PrintService {
                     .get(&1)
                     .and_then(|b| b.payload(&parsed.data))
                     .map(|bytes| String::from_utf8_lossy(bytes).to_string())
-                    .unwrap_or_else(|| String::from_utf8_lossy(&data).to_string());
+                    .unwrap_or_else(|| format!("<missing payload block: {} bytes>", data.len()));
                 (
                     parsed.bundle.primary.id.source,
                     payload_text,
                     (!routing_ext.is_empty()).then_some(routing_ext),
                 )
             }
-            Err(_) => (Eid::Null, String::from_utf8_lossy(&data).to_string(), None),
+            Err(_) => (
+                Eid::Null,
+                format!("<unparseable bundle: {} bytes>", data.len()),
+                None,
+            ),
         };
 
         if self.policy != VerifyPolicy::Ignore {
@@ -138,6 +143,16 @@ impl BpaService for PrintService {
                     }
                 }
             }
+        }
+
+        let remaining_copies = routing_ext.as_ref().and_then(|ext| {
+            ext.mesh_routing
+                .as_ref()
+                .and_then(|m| m.replication_control.as_ref().map(|r| r.quota))
+                .or(ext.spray_permit)
+        });
+        if let Some(remaining) = remaining_copies {
+            eprintln!("Spray-and-Wait remaining copies: {}", remaining);
         }
 
         use std::io::Write;
@@ -223,8 +238,10 @@ async fn main() -> anyhow::Result<()> {
         resolved_token.as_deref(),
         args.socket.as_deref(),
     )?;
+    let disconnected = Arc::new(tokio::sync::Notify::new());
     let service = Arc::new(PrintService {
         sink: OnceCell::new(),
+        disconnected: disconnected.clone(),
         verbose: args.verbose,
         keystore,
         policy,
@@ -243,13 +260,18 @@ async fn main() -> anyhow::Result<()> {
 
     eprintln!("Listening for bundles on: {}", registered_eid);
 
-    // Wait for Ctrl+C to exit
-    tokio::signal::ctrl_c().await?;
-    eprintln!("\nShutting down...");
-
-    if let Some(sink) = service.sink.get() {
-        sink.unregister().await;
+    // Wait for Ctrl+C or unexpected BPA unregistration
+    tokio::select! {
+        res = tokio::signal::ctrl_c() => {
+            res?;
+            eprintln!("\nShutting down...");
+            if let Some(sink) = service.sink.get() {
+                sink.unregister().await;
+            }
+            Ok(())
+        }
+        _ = disconnected.notified() => {
+            anyhow::bail!("Service unregistered by remote BPA");
+        }
     }
-
-    Ok(())
 }

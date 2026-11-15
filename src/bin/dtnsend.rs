@@ -77,9 +77,16 @@ struct Args {
     #[clap(long = "hop-limit", visible_alias = "hop-count")]
     hop_limit: Option<u8>,
 
-    /// Spray-and-Wait initial copy quota / permit count (Block Type 194 & Type 200)
-    #[clap(long = "spray-quota", visible_alias = "spray-limit")]
+    /// Spray-and-Wait maximum copy quota / permit count (Block Type 194 & Type 200)
+    #[clap(
+        long = "spray-quota",
+        visible_aliases = ["spray-limit", "spray-copies", "max-copies"]
+    )]
     spray_quota: Option<u32>,
+
+    /// Request BPv7 status reports (receipt, forward, delivery & deletion, with timestamps)
+    #[clap(long = "status-reports", visible_alias = "report-status")]
+    status_reports: bool,
 }
 
 fn build_and_sign_bundle(
@@ -88,9 +95,12 @@ fn build_and_sign_bundle(
     payload: Vec<u8>,
     args: &Args,
 ) -> anyhow::Result<(hardy_bpv7::bundle::Bundle, Vec<u8>)> {
-    let builder = Builder::new(source_eid, destination_eid)
+    let mut builder = Builder::new(source_eid, destination_eid)
         .with_payload(payload.into())
         .with_lifetime(std::time::Duration::from_secs(args.lifetime));
+    if args.status_reports {
+        builder = builder.with_flags(dtnpm_core::mesh_blocks::status_report_flags());
+    }
     let builder = dtnpm_core::mesh_blocks::apply_routing_extensions(
         builder,
         args.hop_limit,
@@ -144,14 +154,19 @@ async fn main() -> anyhow::Result<()> {
         // Build the bundle locally using hardy_bpv7::builder::Builder
         // Determine the source EID for dryrun
         let source_eid = if let Some(ref sender_str) = args.sender {
-            normalize_eid(sender_str)
-                .parse::<Eid>()
-                .unwrap_or_else(|_| Eid::Dtn {
+            let trimmed = sender_str.trim();
+            if let Ok(eid) = normalize_eid(trimmed).parse::<Eid>() {
+                eid
+            } else if trimmed.contains(':') {
+                anyhow::bail!("invalid sender EID '{trimmed}'");
+            } else {
+                Eid::Dtn {
                     node_name: DtnNodeId {
                         node_name: "localhost".into(),
                     },
-                    service_name: "".into(),
-                })
+                    service_name: trimmed.to_string().into_boxed_str(),
+                }
+            }
         } else {
             Eid::Dtn {
                 node_name: DtnNodeId {
@@ -200,18 +215,25 @@ async fn main() -> anyhow::Result<()> {
 
         // Determine the source EID to build the bundle
         let source_eid = if let Some(ref sender_str) = args.sender {
-            if let Ok(eid) = normalize_eid(sender_str).parse::<Eid>() {
+            let trimmed = sender_str.trim();
+            if let Ok(eid) = normalize_eid(trimmed).parse::<Eid>() {
                 eid
+            } else if trimmed.contains(':') {
+                anyhow::bail!("invalid sender EID '{trimmed}'");
             } else {
                 // If it is just a service number or name, resolve relative to local node EID
                 let base_node = node_ids.first();
                 match base_node {
                     Some(hardy_bpv7::eid::NodeId::Dtn(node_name)) => Eid::Dtn {
                         node_name: node_name.clone(),
-                        service_name: sender_str.trim().to_string().into_boxed_str(),
+                        service_name: trimmed.to_string().into_boxed_str(),
                     },
                     Some(hardy_bpv7::eid::NodeId::Ipn(fqnn)) => {
-                        let service_number = sender_str.trim().parse::<u32>().unwrap_or(0);
+                        let service_number = trimmed.parse::<u32>().with_context(|| {
+                            format!(
+                                "IPN node requires a numeric sender service ID, got '{trimmed}'"
+                            )
+                        })?;
                         Eid::Ipn {
                             fqnn: *fqnn,
                             service_number,
