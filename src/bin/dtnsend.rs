@@ -68,6 +68,48 @@ struct Args {
     /// Optional Unix Domain Socket path for connecting to a protected local BPA
     #[clap(long, env = "DTN_HDY_SOCKET")]
     socket: Option<String>,
+
+    /// Comma-separated APRS-like future path (e.g. 'WIDE1-1,WIDE2-2' or 'dtn://relay1/,WIDE2-2')
+    #[clap(long = "aprs-path")]
+    aprs_path: Option<String>,
+
+    /// RFC 9171 Hop Count Block limit (Type 10, 1..=255)
+    #[clap(long = "hop-limit", visible_alias = "hop-count")]
+    hop_limit: Option<u8>,
+
+    /// Spray-and-Wait initial copy quota / permit count (Block Type 194 & Type 200)
+    #[clap(long = "spray-quota", visible_alias = "spray-limit")]
+    spray_quota: Option<u32>,
+}
+
+fn build_and_sign_bundle(
+    source_eid: Eid,
+    destination_eid: Eid,
+    payload: Vec<u8>,
+    args: &Args,
+) -> anyhow::Result<(hardy_bpv7::bundle::Bundle, Vec<u8>)> {
+    let builder = Builder::new(source_eid, destination_eid)
+        .with_payload(payload.into())
+        .with_lifetime(std::time::Duration::from_secs(args.lifetime));
+    let builder = dtnpm_core::mesh_blocks::apply_routing_extensions(
+        builder,
+        args.hop_limit,
+        args.aprs_path.as_deref(),
+        args.spray_quota,
+    )?;
+
+    let (bundle, binbundle) = builder
+        .build(CreationTimestamp::now())
+        .context("failed to build bundle")?;
+
+    dtnpm_core::cli_security::maybe_sign_bundle(
+        bundle,
+        binbundle.into_vec(),
+        args.sign_key.as_deref(),
+        args.sign_key_file.as_deref(),
+        args.security_source.as_deref(),
+        args.verbose,
+    )
 }
 
 #[tokio::main]
@@ -119,21 +161,8 @@ async fn main() -> anyhow::Result<()> {
             }
         };
 
-        let (bundle, binbundle) = Builder::new(source_eid, destination_eid)
-            .with_payload(buffer.into())
-            .with_lifetime(std::time::Duration::from_secs(args.lifetime))
-            .build(CreationTimestamp::now())
-            .context("failed to build bundle")?;
-
-        // Perform signing if requested
-        let (bundle, binbundle) = dtnpm_core::cli_security::maybe_sign_bundle(
-            bundle,
-            binbundle.into_vec(),
-            args.sign_key.as_deref(),
-            args.sign_key_file.as_deref(),
-            args.security_source.as_deref(),
-            args.verbose,
-        )?;
+        let (bundle, binbundle) =
+            build_and_sign_bundle(source_eid, destination_eid, buffer, &args)?;
 
         println!("Bundle-Id: {}", bundle.primary.id.to_key());
         let hexstr: String = binbundle.iter().map(|b| format!("{:02x}", b)).collect();
@@ -144,7 +173,8 @@ async fn main() -> anyhow::Result<()> {
             eprintln!("Connecting to Hardy BPA at {}", grpc_addr);
         }
 
-        let resolved_token = dtnpm::resolve_bearer_token(args.token, args.token_file.as_deref())?;
+        let resolved_token =
+            dtnpm::resolve_bearer_token(args.token.clone(), args.token_file.as_deref())?;
         let (remote_bpa, _grpc_guard) = dtnpm_core::create_remote_bpa(
             &grpc_addr,
             resolved_token.as_deref(),
@@ -209,21 +239,8 @@ async fn main() -> anyhow::Result<()> {
         }
 
         // Build the bundle locally using hardy_bpv7::builder::Builder
-        let (bundle, binbundle) = Builder::new(source_eid, destination_eid)
-            .with_payload(buffer.into())
-            .with_lifetime(std::time::Duration::from_secs(args.lifetime))
-            .build(CreationTimestamp::now())
-            .context("failed to build bundle")?;
-
-        // Perform signing if requested
-        let (bundle, binbundle) = dtnpm_core::cli_security::maybe_sign_bundle(
-            bundle,
-            binbundle.into_vec(),
-            args.sign_key.as_deref(),
-            args.sign_key_file.as_deref(),
-            args.security_source.as_deref(),
-            args.verbose,
-        )?;
+        let (bundle, binbundle) =
+            build_and_sign_bundle(source_eid, destination_eid, buffer, &args)?;
 
         // Get the sink and send the payload
         if let Some(sink) = sender_cla.sink.get() {

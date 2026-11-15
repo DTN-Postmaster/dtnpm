@@ -86,8 +86,12 @@ impl BpaService for PrintService {
         stream: &mut dyn hardy_bpa::stream::Receiver<hardy_bpa::stream::Segment>,
     ) -> hardy_bpa::services::Result<()> {
         let data = hardy_bpa::stream::buffer_stream(stream, total_len).await?;
-        let (source, text) = match hardy_bpv7::parse::parse(data.clone()) {
+        let (source, text, routing_ext) = match hardy_bpv7::parse::parse(data.clone()) {
             Ok(parsed) => {
+                let routing_ext = dtnpm_core::mesh_blocks::extract_routing_extensions(
+                    &parsed.bundle,
+                    &parsed.data,
+                );
                 let payload_text = parsed
                     .bundle
                     .blocks
@@ -95,9 +99,13 @@ impl BpaService for PrintService {
                     .and_then(|b| b.payload(&parsed.data))
                     .map(|bytes| String::from_utf8_lossy(bytes).to_string())
                     .unwrap_or_else(|| String::from_utf8_lossy(&data).to_string());
-                (parsed.bundle.primary.id.source, payload_text)
+                (
+                    parsed.bundle.primary.id.source,
+                    payload_text,
+                    (!routing_ext.is_empty()).then_some(routing_ext),
+                )
             }
-            Err(_) => (Eid::Null, String::from_utf8_lossy(&data).to_string()),
+            Err(_) => (Eid::Null, String::from_utf8_lossy(&data).to_string(), None),
         };
 
         if self.policy != VerifyPolicy::Ignore {
@@ -135,6 +143,35 @@ impl BpaService for PrintService {
         use std::io::Write;
         let mut stdout = std::io::stdout().lock();
         let _ = writeln!(stdout, "From: {}", source);
+        if let Some(ext) = routing_ext {
+            if let Some(hc) = ext.hop_count {
+                let _ = writeln!(stdout, "Hop-Count: {}/{}", hc.count, hc.limit);
+            }
+            if let Some(permit) = ext.spray_permit {
+                let _ = writeln!(stdout, "Spray-Permit: {}", permit);
+            }
+            if let Some(ref mesh) = ext.mesh_routing
+                && let Some(ref rep) = mesh.replication_control
+            {
+                let _ = writeln!(
+                    stdout,
+                    "Mesh-Replication: quota={}, mode={:?}, phase={:?}",
+                    rep.quota, rep.mode, rep.phase
+                );
+            }
+            if let Some(ref aprs) = ext.aprs_path_formatted {
+                let _ = writeln!(stdout, "APRS-Path: {}", aprs);
+            }
+            if let Some(ref treb) = ext.treb {
+                let hops = treb
+                    .hops
+                    .iter()
+                    .map(|h| h.node_eid.as_str())
+                    .collect::<Vec<_>>()
+                    .join(" -> ");
+                let _ = writeln!(stdout, "TREB-Trace ({} hops): {}", treb.hops.len(), hops);
+            }
+        }
         let _ = writeln!(stdout, "{}", text);
         Ok(())
     }
