@@ -24,6 +24,11 @@ pub use dtnpm_mod_chat::{self as mod_chat, ChatManager, ChatModule, ChatService}
 #[cfg(feature = "mod-files")]
 pub use dtnpm_mod_files::{self as mod_files, FileBundleRecord, FilesModule, FilesService};
 
+#[cfg(feature = "mod-rego-routing")]
+pub use dtnpm_mod_rego_routing::{
+    self as mod_rego_routing, RegoRoutingAgent, RegoRoutingConfig, RegoRoutingEngine,
+    RegoRoutingModule,
+};
 #[cfg(feature = "mod-senml")]
 pub use dtnpm_mod_senml::{
     self as mod_senml, SenmlManager, SenmlModule, SenmlService, SenmlStorage,

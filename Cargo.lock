@@ -916,6 +916,7 @@ dependencies = [
  "dtnpm-core",
  "dtnpm-mod-chat",
  "dtnpm-mod-files",
+ "dtnpm-mod-rego-routing",
  "dtnpm-mod-senml",
  "dtnpm-web-core",
  "hardy-async",
@@ -1086,6 +1087,31 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.10.9",
+ "time",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "dtnpm-mod-rego-routing"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "axum",
+ "ciborium",
+ "dtnpm-core",
+ "dtnpm-web-core",
+ "hardy-async",
+ "hardy-bpa",
+ "hardy-bpv7",
+ "hardy-cbor",
+ "hardy-eid-patterns",
+ "regorus",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
  "time",
  "tokio",
  "tracing",

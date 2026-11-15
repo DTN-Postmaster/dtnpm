@@ -36,6 +36,7 @@ cla-mercury = ["node", "dep:dtnpm-cla-mercury-arq"]
 mod-chat = ["web-core", "dep:dtnpm-mod-chat"]
 mod-files = ["web-core", "dep:dtnpm-mod-files"]
 mod-senml = ["web-core", "dep:dtnpm-mod-senml"]
+mod-rego-routing = ["web-core", "dep:dtnpm-mod-rego-routing"]
 
 # Distribution profiles:
 # 1. Full Emergency Communications / All-in-one Hamradio node
@@ -48,13 +49,14 @@ emcom = [
     "mod-chat",
     "mod-files",
     "mod-senml",
+    "mod-rego-routing",
 ]
 # 2. Satellite / AMSAT profile (LTP + HQFBP + SenML telemetry)
 amsat = ["node", "web-core", "cla-ltp", "cla-hqfbp", "mod-senml"]
 # 3. Headless RF/TCPCL router node (BPA + CLAs + gRPC server, zero web stack)
 node-headless = ["node", "cla-ltp", "cla-hqfbp", "cla-mercury"]
 # 4. Remote operator WebUI connecting over gRPC to a headless node
-webui-remote = ["web-core", "mod-chat", "mod-files", "mod-senml"]
+webui-remote = ["web-core", "mod-chat", "mod-files", "mod-senml", "mod-rego-routing"]
 
 instrument = [
     "dtnpm-core/instrument",
@@ -122,6 +124,7 @@ dtnpm-cla-mercury-arq = { path = "../dtnpm-cla-mercury-arq", default-features = 
 dtnpm-mod-chat = { path = "../dtnpm-mod-chat", default-features = false, optional = true }
 dtnpm-mod-files = { path = "../dtnpm-mod-files", default-features = false, optional = true }
 dtnpm-mod-senml = { path = "../dtnpm-mod-senml", default-features = false, optional = true }
+dtnpm-mod-rego-routing = { path = "../dtnpm-mod-rego-routing", default-features = false, optional = true }
 
 hardy-async = { path = "../../hardy/async", features = ["watcher"] }
 hardy-bpa = { path = "../../hardy/bpa", default-features = false, features = ["serde", "rfc9173", "tokio"] }

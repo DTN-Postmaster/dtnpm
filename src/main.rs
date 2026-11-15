@@ -260,6 +260,8 @@ async fn run_remote_webui(
     modules.push(Arc::new(dtnpm_mod_senml::SenmlModule::with_config_path(
         config.config_path.clone(),
     )));
+    #[cfg(feature = "mod-rego-routing")]
+    modules.push(Arc::new(dtnpm_mod_rego_routing::RegoRoutingModule::new()?));
 
     let keystore = Arc::new(DirectionalKeyStore::empty());
     let ctx = ModuleContext::new(

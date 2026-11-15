@@ -43,6 +43,8 @@ pub struct HamServer {
     coordinators: Vec<ContactCoordinator>,
     #[cfg(feature = "web-core")]
     web_injector: Option<WebBundleInjector>,
+    #[cfg(feature = "web-core")]
+    web_modules: Vec<Arc<dyn WebModule>>,
     cla_manager: ClaManager,
     internal_storage: InternalStorage,
     route_manager: Arc<RouteManager>,
@@ -447,6 +449,43 @@ impl HamServer {
             None
         };
 
+        #[cfg(feature = "web-core")]
+        let web_modules = {
+            #[allow(unused_mut)]
+            let mut modules: Vec<Arc<dyn WebModule>> = Vec::new();
+            #[cfg(feature = "mod-chat")]
+            modules.push(Arc::new(dtnpm_mod_chat::ChatModule::new()));
+            #[cfg(feature = "mod-files")]
+            modules.push(Arc::new(dtnpm_mod_files::FilesModule::new()));
+            #[cfg(feature = "mod-senml")]
+            modules.push(Arc::new(dtnpm_mod_senml::SenmlModule::with_config_path(
+                config.config_path.clone(),
+            )));
+            #[cfg(feature = "mod-rego-routing")]
+            {
+                let rego_cfg = dtnpm_mod_rego_routing::RegoRoutingConfig {
+                    local_eid: config.node_id.clone(),
+                    node_eids: endpoints.iter().map(ToString::to_string).collect(),
+                    ..Default::default()
+                };
+                let rego_module = Arc::new(
+                    dtnpm_mod_rego_routing::RegoRoutingModule::with_config(rego_cfg)
+                        .context("Failed to initialize RegoRoutingModule")?,
+                );
+                builder = builder.routing_agent(
+                    "rego_routing".to_string(),
+                    rego_module.routing_agent().clone(),
+                );
+                modules.push(rego_module);
+            }
+            for module in &modules {
+                for pack in module.filter_packs() {
+                    builder = builder.add_filters(pack);
+                }
+            }
+            modules
+        };
+
         let bpa = Arc::new(builder.build().await.map_err(anyhow::Error::from_boxed)?);
 
         let grpc_config = if config.grpc.enabled || config.grpc.auth.socket_path.is_some() {
@@ -483,6 +522,8 @@ impl HamServer {
             coordinators,
             #[cfg(feature = "web-core")]
             web_injector,
+            #[cfg(feature = "web-core")]
+            web_modules,
             cla_manager,
             internal_storage,
             route_manager,
@@ -497,17 +538,7 @@ impl HamServer {
     #[must_use]
     #[allow(clippy::vec_init_then_push, unused_mut)]
     pub fn web_modules(&self) -> Vec<Arc<dyn WebModule>> {
-        let mut modules: Vec<Arc<dyn WebModule>> = Vec::new();
-        #[cfg(feature = "mod-chat")]
-        modules.push(Arc::new(dtnpm_mod_chat::ChatModule::new()));
-        #[cfg(feature = "mod-files")]
-        modules.push(Arc::new(dtnpm_mod_files::FilesModule::new()));
-        #[cfg(feature = "mod-senml")]
-        modules.push(Arc::new(dtnpm_mod_senml::SenmlModule::with_config_path(
-            self.config.config_path.clone(),
-        )));
-        let _ = &self.config;
-        modules
+        self.web_modules.clone()
     }
 
     /// Builds a [`ModuleContext`] and the active [`WebModule`] list for web serving or tests.
