@@ -466,6 +466,7 @@ impl HamServer {
                 let rego_cfg = dtnpm_mod_rego_routing::RegoRoutingConfig {
                     local_eid: config.node_id.clone(),
                     node_eids: endpoints.iter().map(ToString::to_string).collect(),
+                    callsign: config.callsign.clone(),
                     ..Default::default()
                 };
                 let rego_module = Arc::new(
