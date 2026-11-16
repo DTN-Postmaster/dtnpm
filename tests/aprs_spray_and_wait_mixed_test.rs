@@ -4,6 +4,8 @@ use std::io::Write;
 use std::net::TcpListener;
 use std::process::{Command, Stdio};
 use std::time::Duration;
+use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
+use tokio::process::Command as AsyncCommand;
 
 use dtnpm::config::cla::{ClaConfig, ClaType, Tcpclv4HamConfig};
 use dtnpm::config::{GrpcConfig, HamConfig, RegoRoutingYamlConfig, StorageConfig, WebConfig};
@@ -151,24 +153,6 @@ fn send_bundle(grpc_port: u16, extra_args: &[&str], payload: &str) {
     );
 }
 
-async fn update_routing_policy(web_port: u16, routing_rego: &str) {
-    let client = reqwest::Client::new();
-    let url = format!("http://127.0.0.1:{web_port}/api/rego_routing/v1/policy");
-    let resp = client
-        .put(&url)
-        .json(&serde_json::json!({
-            "custom_routing_rego": routing_rego
-        }))
-        .send()
-        .await
-        .expect("PUT /api/rego_routing/v1/policy");
-    assert!(
-        resp.status().is_success(),
-        "policy update failed: {}",
-        resp.status()
-    );
-}
-
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn test_seven_dtnpm_mixed_aprs_and_spray_and_wait() {
     // 7-station topology:
@@ -176,7 +160,6 @@ async fn test_seven_dtnpm_mixed_aprs_and_spray_and_wait() {
     //   A -> B2 -> C2 -> D1
     //   A -> B3 -> C2
     let grpc_a = alloc_port();
-    let web_a = alloc_port();
     let grpc_d1 = alloc_port();
 
     let tcp_a = alloc_port();
@@ -193,19 +176,39 @@ async fn test_seven_dtnpm_mixed_aprs_and_spray_and_wait() {
         r#"{"dtn://d1/**"}"#,
         r#"{"dtn://c2/"}"#,
     );
-    let a_phase1_b2 = combined_policy(
-        r#"{"dtn://d1/**"}"#,
-        r#"{"dtn://b2/"}"#,
-        r#"{"dtn://d1/**"}"#,
-        r#"{"dtn://b2/", "dtn://b3/"}"#,
-    );
-    let a_phase2_b3 = combined_policy(
-        r#"{"dtn://d1/**"}"#,
-        r#"{"dtn://b3/"}"#,
-        r#"{"dtn://d1/**"}"#,
-        r#"{"dtn://b2/", "dtn://b3/"}"#,
-    );
-    let a_phase3_snw = combined_policy("set()", "set()", r#"{"dtn://d1/**"}"#, r#"{"dtn://b2/"}"#);
+    let a_concurrent_policy = r#"
+package dtn.routing
+
+import rego.v1
+import data.dtn.helpers
+
+# Per-bundle APRS routing via RegoRib::decide(&bundle):
+# Bundle 1 (route_key = dtn://b2/) and Bundle 2 (route_key = dtn://b3/)
+# are routed concurrently without any policy reload.
+decide := {
+    "action": "FORWARD",
+    "next_hop": input.bundle.route_key,
+    "retain": false,
+} if {
+    input.bundle.route_key != null
+    some peer in input.peers
+    peer.peer_eid == input.bundle.route_key
+    helpers.peer_allowed(peer, input.node)
+}
+
+# Fallback for Bundle 3 (Spray-and-Wait L=8, no APRS route_key):
+# DefaultRib installs FORWARD_REPLICATE toward dtn://b2/.
+routes contains {
+    "pattern": "dtn://d1/**",
+    "action": "FORWARD_REPLICATE",
+    "next_hop": peer.peer_eid,
+    "priority": 100,
+} if {
+    some peer in input.peers
+    helpers.peer_allowed(peer, input.node)
+    peer.peer_eid == "dtn://b2/"
+}
+"#;
 
     let cfg_d1 = make_node_config("dtn://d1/", Some(grpc_d1), None, tcp_d1, vec![], None);
     let cfg_c1 = make_node_config("dtn://c1/", None, None, tcp_c1, vec![], None);
@@ -244,14 +247,14 @@ async fn test_seven_dtnpm_mixed_aprs_and_spray_and_wait() {
     let cfg_a = make_node_config(
         "dtn://a/",
         Some(grpc_a),
-        Some(web_a),
+        None,
         tcp_a,
         vec![
             format!("127.0.0.1:{tcp_b1}"),
             format!("127.0.0.1:{tcp_b2}"),
             format!("127.0.0.1:{tcp_b3}"),
         ],
-        Some(&a_phase1_b2),
+        Some(a_concurrent_policy),
     );
 
     let srv_d1 = HamServer::new(cfg_d1).await.expect("srv_d1");
@@ -285,40 +288,50 @@ async fn test_seven_dtnpm_mixed_aprs_and_spray_and_wait() {
     // Wait for TCPCLv4 links, RegoRoutingAgent reconciliation, and gRPC/HTTP servers.
     tokio::time::sleep(Duration::from_millis(800)).await;
 
-    let mut dtnprint_child = Command::new(env!("CARGO_BIN_EXE_dtnprint"))
+    let mut dtnprint_child = AsyncCommand::new(env!("CARGO_BIN_EXE_dtnprint"))
         .args(["-p", &grpc_d1.to_string(), "-s", "incoming", "-v"])
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
         .expect("spawn dtnprint");
 
+    let stdout_pipe = dtnprint_child.stdout.take().expect("dtnprint stdout");
+    let mut stderr_pipe = dtnprint_child.stderr.take().expect("dtnprint stderr");
+
     tokio::time::sleep(Duration::from_millis(400)).await;
 
+    // Send all 3 bundles concurrently under the SAME static policy on A!
     // 1. Bundle 1: APRS via B2 -> C2 -> D1
     let p1 = "Bundle 1 APRS via B2";
     send_bundle(grpc_a, &["--aprs-path", "dtn://b2/,dtn://c2/"], p1);
-    tokio::time::sleep(Duration::from_millis(500)).await;
 
     // 2. Bundle 2: APRS via B3 -> C2 -> D1
-    update_routing_policy(web_a, &a_phase2_b3).await;
-    tokio::time::sleep(Duration::from_millis(200)).await;
     let p2 = "Bundle 2 APRS via B3";
     send_bundle(grpc_a, &["--aprs-path", "dtn://b3/,dtn://c2/"], p2);
-    tokio::time::sleep(Duration::from_millis(500)).await;
 
     // 3. Bundle 3: Spray-and-Wait with L=8 (8 -> 4 -> 2 across A -> B2 -> C2 -> D1)
-    update_routing_policy(web_a, &a_phase3_snw).await;
-    tokio::time::sleep(Duration::from_millis(200)).await;
     let p3 = "Bundle 3 Spray-and-Wait L=8";
     send_bundle(grpc_a, &["--spray-copies", "8"], p3);
-    tokio::time::sleep(Duration::from_millis(800)).await;
 
-    let _ = dtnprint_child.kill();
-    let out = dtnprint_child
-        .wait_with_output()
-        .expect("wait dtnprint output");
-    let stdout_str = String::from_utf8_lossy(&out.stdout);
-    let stderr_str = String::from_utf8_lossy(&out.stderr);
+    let mut reader = BufReader::new(stdout_pipe);
+    let mut stdout_str = String::new();
+    let _ = tokio::time::timeout(Duration::from_secs(6), async {
+        let mut line = String::new();
+        while !(stdout_str.contains(p1) && stdout_str.contains(p2) && stdout_str.contains(p3)) {
+            line.clear();
+            let n = reader.read_line(&mut line).await.unwrap_or(0);
+            if n == 0 {
+                break;
+            }
+            stdout_str.push_str(&line);
+        }
+    })
+    .await;
+
+    let _ = dtnprint_child.kill().await;
+    let _ = dtnprint_child.wait().await;
+    let mut stderr_str = String::new();
+    let _ = stderr_pipe.read_to_string(&mut stderr_str).await;
 
     assert!(
         stdout_str.contains(p1),
@@ -332,13 +345,35 @@ async fn test_seven_dtnpm_mixed_aprs_and_spray_and_wait() {
         stdout_str.contains(p3),
         "D1 missing Bundle 3: stdout={stdout_str:?}, stderr={stderr_str:?}"
     );
+
+    // Verify per-bundle path attribution (not just aggregated across all bundles).
+    let bundle_blocks: Vec<&str> = stdout_str
+        .split("From: ")
+        .filter(|s| !s.is_empty())
+        .collect();
+    let b1 = bundle_blocks
+        .iter()
+        .find(|b| b.contains(p1))
+        .expect("Bundle 1 block");
     assert!(
-        stdout_str.contains("dtn://b2/") && stdout_str.contains("dtn://b3/"),
-        "expected TREB traces through both B2 and B3: stdout={stdout_str:?}"
+        b1.contains("dtn://b2/") && !b1.contains("dtn://b3/"),
+        "Bundle 1 must traverse B2 (not B3): {b1:?}"
     );
+    let b2 = bundle_blocks
+        .iter()
+        .find(|b| b.contains(p2))
+        .expect("Bundle 2 block");
     assert!(
-        stdout_str.contains("Spray-Permit: 2"),
-        "expected Spray-Permit: 2 on D1: stdout={stdout_str:?}"
+        b2.contains("dtn://b3/") && !b2.contains("dtn://b2/"),
+        "Bundle 2 must traverse B3 (not B2): {b2:?}"
+    );
+    let b3 = bundle_blocks
+        .iter()
+        .find(|b| b.contains(p3))
+        .expect("Bundle 3 block");
+    assert!(
+        b3.contains("Spray-Permit: 2") && b3.contains("Mesh-Replication: quota=2"),
+        "Bundle 3 must carry Spray-Permit: 2 (8 -> 4 -> 2): {b3:?}"
     );
     assert!(
         stderr_str.contains("Spray-and-Wait remaining copies: 2"),

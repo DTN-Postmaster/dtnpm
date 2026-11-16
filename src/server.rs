@@ -167,6 +167,13 @@ impl HamServer {
             );
             builder =
                 builder.routing_agent("rego_routing".to_string(), module.routing_agent().clone());
+            let engine_for_rib = module.engine().clone();
+            builder = builder.rib(move |default_rib| {
+                Arc::new(dtnpm_mod_rego_routing::RegoRib::new(
+                    default_rib,
+                    engine_for_rib,
+                ))
+            });
             module
         };
 
