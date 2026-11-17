@@ -2,6 +2,20 @@
 
 Modular assembly repository for **DTN Postmaster** (`dtnpm`), combining [`dtnpm-core`](../dtnpm-core), Convergence Layer Adapters, [`dtnpm-web-core`](../dtnpm-web-core), fullstack application modules, the `dtnpm` BPA daemon, and standalone DTN CLI utilities.
 
+## Web Console Screenshots
+
+| Station Overview | Bundle Storage Inspector |
+| :---: | :---: |
+| ![Station Overview](docs/screenshots/station-overview.png) | ![Bundle Storage Inspector](docs/screenshots/bundles-inspector.png) |
+
+| Interactive Chat | SenML Telemetry |
+| :---: | :---: |
+| ![Interactive Chat](docs/screenshots/chat.png) | ![SenML Telemetry](docs/screenshots/senml.png) |
+
+| Rego Routing & Filtering | File Bundles |
+| :---: | :---: |
+| ![Rego Routing](docs/screenshots/rego-routing.png) | ![File Bundles](docs/screenshots/files.png) |
+
 ## Architecture & Component Repositories
 
 | Crate | Purpose |
