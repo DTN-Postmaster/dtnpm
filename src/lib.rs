@@ -2,7 +2,7 @@
 //!
 //! Assembles `dtnpm-core`, optional convergence layers (`dtnpm-cla-*`),
 //! optional `dtnpm-web-core`, and optional fullstack application modules (`dtnpm-mod-*`)
-//! into cohesive deployment profiles (`emcom`, `amsat`, `node-headless`, `webui-remote`).
+//! into cohesive deployment profiles (`desktop`, `amsat`, `node-headless`, `webui-remote`).
 
 pub use dtnpm_core::{
     BpaClient, GrpcBpaClient, LocalBpaClient, MockBpa, NoopSenderCla, ServiceTracker, basket,

@@ -6,7 +6,7 @@ license = "MIT OR Apache-2.0"
 description = "DTN Postmaster (dtnpm): modular Hardy BPv7 bundle processing agent, convergence layers, web console and CLI utilities"
 
 [features]
-default = ["emcom", "cli"]
+default = ["desktop", "cli"]
 
 node = [
     "dtnpm-core/transport-local",
@@ -40,7 +40,7 @@ mod-rego-routing = ["web-core", "dep:dtnpm-mod-rego-routing"]
 
 # Distribution profiles:
 # 1. Full Emergency Communications / All-in-one Hamradio node
-emcom = [
+desktop = [
     "node",
     "web-core",
     "cla-ltp",

@@ -1,4 +1,4 @@
-#![cfg(feature = "emcom")]
+#![cfg(feature = "desktop")]
 
 use dtnpm::config::cla::{ClaConfig, ClaType, Tcpclv4HamConfig};
 use dtnpm::{HamConfig, HamServer};

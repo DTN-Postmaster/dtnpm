@@ -19,7 +19,7 @@ Modular assembly repository for **DTN Postmaster** (`dtnpm`), combining [`dtnpm-
 
 | Profile / Feature | Contents |
 | --- | --- |
-| `emcom` *(default)* | Full all-in-one station: `node`, `web-core`, `cla-ltp`, `cla-hqfbp`, `cla-mercury`, `mod-chat`, `mod-files`, `mod-senml` |
+| `desktop` *(default)* | Full all-in-one station: `node`, `web-core`, `cla-ltp`, `cla-hqfbp`, `cla-mercury`, `mod-chat`, `mod-files`, `mod-senml` |
 | `amsat` | Satellite / AMSAT station: `node`, `web-core`, `cla-ltp`, `cla-hqfbp`, `mod-senml` |
 | `node-headless` | Headless RF/TCPCL router node with gRPC: `node`, `cla-ltp`, `cla-hqfbp`, `cla-mercury` |
 | `webui-remote` | Remote operator console over gRPC: `web-core`, `mod-chat`, `mod-files`, `mod-senml` |
@@ -38,14 +38,14 @@ Modular assembly repository for **DTN Postmaster** (`dtnpm`), combining [`dtnpm-
 Requires sibling checkouts (`../dtnpm-*`, `../../hardy/*`, `../../hqfbp-rs`).
 
 ```bash
-# Run unit, binary, and integration tests with default features (emcom,cli)
+# Run unit, binary, and integration tests with default features (desktop,cli)
 cargo test --all-targets
 
 # Verify deployment profiles
 cargo check --no-default-features --features amsat
 cargo check --no-default-features --features node-headless
 cargo check --no-default-features --features webui-remote
-cargo check --no-default-features --features "emcom,instrument"
+cargo check --no-default-features --features "desktop,instrument"
 cargo check --no-default-features --features "webui-remote,cli"
 ```
 
