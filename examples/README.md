@@ -216,10 +216,10 @@ An automated test harness (`run_e2e_hardy_duo.sh` and `test_e2e_hardy_duo.py`) s
 - **Bundle Inspector & Log Ring Buffer**: Storage detail view and in-memory log buffer (`/api/v1/logs`).
 
 ```bash
-# Exécution complète de la suite E2E automatisée :
+# Run the full automated E2E suite:
 ./examples/run_e2e_hardy_duo.sh
 
-# Pour conserver les 2 instances actives en tâche de fond pour inspection interactive web/REST :
+# Keep both instances running in the background for interactive web/REST inspection:
 ./examples/run_e2e_hardy_duo.sh --keep-alive
 ```
 

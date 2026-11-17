@@ -1,17 +1,17 @@
-# Conventions de Développement — `dtnpm`
+# Development Conventions — `dtnpm`
 
-Ce document formalise les conventions, standards de codage et exigences de robustesse applicables au projet `dtnpm`.
+This document formalizes the conventions, coding standards, and robustness requirements applicable to the `dtnpm` project.
 
 ---
 
-## 1. Standards de Code & Zéro Panic / Zéro Unwrap
+## 1. Coding Standards & Zero Panic / Zero Unwrap
 
-- **Règle absolue** : Aucun appel à `.unwrap()`, `.expect()` ni invocation de la macro `panic!()` n'est autorisé dans le code de production (`--lib`, `--bins`).
-- **Gestion des erreurs** :
-  - Utiliser l'opérateur `?` pour propager les erreurs.
-  - Transformer les options via `.ok_or_else(|| ...)` ou `.ok_or(...)`.
-  - Pour les mutex et verrous partagés, gérer le cas d'un verrou empoisonné de manière sûre : `lock().map_err(|e| ...)` ou `unwrap_or_else(|e| e.into_inner())`.
-- **Validation statique** : Le linter strict doit être exécuté et passer sans aucun avertissement :
+- **Absolute Rule**: No calls to `.unwrap()`, `.expect()`, or invocations of the `panic!()` macro are allowed in production code (`--lib`, `--bins`).
+- **Error Handling**:
+  - Use the `?` operator to propagate errors.
+  - Transform options via `.ok_or_else(|| ...)` or `.ok_or(...)`.
+  - For mutexes and shared locks, handle poisoned locks safely: `lock().map_err(|e| ...)` or `unwrap_or_else(|e| e.into_inner())`.
+- **Static Validation**: The strict linter must be executed and pass with zero warnings:
   ```bash
   cargo clippy --workspace --lib --bins -- -D warnings -D clippy::unwrap_used -D clippy::panic
   cargo fmt --all -- --check
@@ -19,43 +19,43 @@ Ce document formalise les conventions, standards de codage et exigences de robus
 
 ---
 
-## 2. Arguments en Ligne de Commande & Gestion des Secrets (CRA)
+## 2. Command-Line Arguments & Secrets Management (CRA)
 
-- **Parcours CLI `clap`** : Toutes les commandes utilisent l'attribut `derive` de `clap`.
-- **Gestion sécurisée des secrets** :
-  - Conformément aux exigences du Cyber Resilience Act (CRA), ne JAMAIS forcer l'utilisateur à passer des mots de passe ou des jetons d'authentification en clair dans la ligne de commande.
-  - Privilégier systématiquement `--token-file <PATH>` (avec support de la variable d'environnement `DTN_HDY_TOKEN_FILE`).
-  - L'option dépréciée `--token` doit afficher un avertissement de sécurité sur `stderr` incitant à migrer vers `--token-file`.
-  - Pour les commandes de création/modification d'utilisateurs (`user add`, `user passwd`), fournir l'option `--password-stdin` pour injecter le secret depuis un canal sécurisé.
-- **Résolution de port** :
-  - Port gRPC local par défaut : `50051`.
-  - Port Web / HTTP par défaut : `3000`.
-  - Toujours respecter les variables d'environnement prioritaires `HARDY_GRPC_PORT` ou `DTN_WEB_PORT`.
-
----
-
-## 3. Séparation des Flux de Sortie
-
-- **`stdout`** : Réservé exclusivement aux sorties fonctionnelles et données consommables par des scripts en pipeline (payloads décodés, identifiants de bundles, CBOR sérialisé, statistiques JSON, hachages de digest, métriques de ping).
-- **`stderr`** : Réservé exclusivement à la journalisation, aux avertissements de sécurité, aux traces d'exécution et aux messages d'erreur.
-- **Écritures atomiques** : Verrouiller `std::io::stdout().lock()` lors de l'écriture de blocs multi-lignes pour éviter tout entrelacement lors d'exécutions concurrentes.
+- **`clap` CLI Parsing**: All commands use `clap`'s `derive` attribute.
+- **Secure Secrets Management**:
+  - In accordance with Cyber Resilience Act (CRA) requirements, NEVER force the user to pass passwords or authentication tokens in plaintext on the command line.
+  - Systematically prefer `--token-file <PATH>` (with support for the `DTN_HDY_TOKEN_FILE` environment variable).
+  - The deprecated `--token` option must print a security warning to `stderr` urging migration to `--token-file`.
+  - For user creation/modification commands (`user add`, `user passwd`), provide the `--password-stdin` option to inject the secret from a secure channel.
+- **Port Resolution**:
+  - Default local gRPC port: `50051`.
+  - Default Web / HTTP port: `3000`.
+  - Always honor the priority environment variables `HARDY_GRPC_PORT` or `DTN_WEB_PORT`.
 
 ---
 
-## 4. Dates et Horodatages
+## 3. Output Stream Separation
 
-- Utiliser systématiquement la bibliothèque `time` (notamment `time::OffsetDateTime`).
-- Formater les dates en chaînes conformes à `Rfc3339` (`time::format_description::well_known::Rfc3339`).
-
----
-
-## 5. Dérogations de Sécurité Explicites (Opt-in)
-
-- Tout comportement permissif (ex. acceptation de trafic non signé, tolérance de pairs non identifiés) doit exiger un drapeau CLI explicite ou une option dédiée dans le fichier de configuration (ex. `--allow-unauthenticated-udp`, `--allow-unidentified-rf`, `--allow-third-party-report-to`).
-- Il est strictement interdit d'abaisser les niveaux de sécurité par défaut sans accord explicite de l'utilisateur.
+- **`stdout`**: Reserved exclusively for functional outputs and data consumable by piped scripts (decoded payloads, bundle IDs, serialized CBOR, JSON statistics, digest hashes, ping metrics).
+- **`stderr`**: Reserved exclusively for logging, security warnings, execution traces, and error messages.
+- **Atomic Writes**: Lock `std::io::stdout().lock()` when writing multi-line blocks to prevent interleaving during concurrent executions.
 
 ---
 
-## 6. Traçabilité Architecturale (ADR)
+## 4. Dates and Timestamps
 
-- Toute modification de structure, de modèle de données ou de protocole de sécurité doit faire l'objet d'un nouvel enregistrement ADR dans `adr/` et être référencée dans `adr/README.md`.
+- Systematically use the `time` library (specifically `time::OffsetDateTime`).
+- Format dates as `Rfc3339`-compliant strings (`time::format_description::well_known::Rfc3339`).
+
+---
+
+## 5. Explicit Security Overrides (Opt-in)
+
+- Any permissive behavior (e.g., accepting unsigned traffic, tolerating unidentified peers) must require an explicit CLI flag or a dedicated option in the configuration file (e.g., `--allow-unauthenticated-udp`, `--allow-unidentified-rf`, `--allow-third-party-report-to`).
+- It is strictly forbidden to lower default security levels without explicit user consent.
+
+---
+
+## 6. Architectural Traceability (ADR)
+
+- Any modification to structure, data models, or security protocols must be recorded in a new ADR in `adr/` and referenced in `adr/README.md`.

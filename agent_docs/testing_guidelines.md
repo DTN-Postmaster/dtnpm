@@ -1,56 +1,56 @@
-# Guide de Test et d'Assurance Qualité — `dtnpm`
+# Testing & Quality Assurance Guide — `dtnpm`
 
-Ce document présente la stratégie de test, la validation hors-ligne, les garde-fous de sécurité et la mesure de couverture pour le projet `dtnpm`.
-
----
-
-## 1. Tests Unitaires & Intégrité Locale
-
-- **Zéro dépendance réseau en test** : Toutes les suites de tests doivent être exécutables en mode déconnecté (`--offline`).
-- **Tests d'encodage/décodage CBOR & EID** : Valider que les identifiants d'endpoints (EID) et les blocs BPv7 (RFC 9171) sont fidèles aux spécifications et protégés contre les dépassements d'entiers ou les allocations non bornées.
-- **Vérification BPSec** :
-  - Tester les trois modes de politique (`Strict`, `Warn`, `Ignore`).
-  - Vérifier que sous `VerifyPolicy::Strict`, les bundles non signés (`Unsigned`), à clé introuvable (`MissingKey`) ou corrompus (`Invalid`) sont systématiquement rejetés.
-- **Sanitisation et bornes mémoires** :
-  - Valider l'assainissement des noms de fichiers dans `dtnfiles` (protection contre les chemins relatifs, caractères d'échappement, noms trop longs).
-  - Valider le filtrage par liste blanche des unités journald dans `hdy-stats` (rejet des tirets initiaux et métacaractères d'injection).
-  - Valider les requêtes avec filtre SQL `--addr` et `--limit` dans `dtnquery`.
+This document presents the testing strategy, offline validation, security guardrails, and coverage measurement for the `dtnpm` project.
 
 ---
 
-## 2. Tests d'Intégration & Mocks de Services
+## 1. Unit Tests & Local Integrity
 
-- Les tests d'intégration simulent les interactions réelles entre composants :
-  - **`iam_integration_test.rs`** : Valide le contrôle d'accès PBAC, la gestion des utilisateurs, les sessions, et l'enregistrement de services via la passerelle gRPC et socket UNIX.
-  - **`bpsec_chat_files_test.rs`** : Valide la chaîne complète de signature et vérification BPSec pour les modules Chat et Fichiers.
-  - **`ham_server_test.rs`** : Valide l'initialisation du serveur dtnpm avec différentes configurations TOML/YAML, la parité des configurations, et la gestion des CLAs.
-  - **`bundle_inspector_test.rs`** : Valide l'inspection des bundles en mémoire et sur disque SQLite.
-- Les tests asynchrones utilisent `tokio::test` avec des timeouts raisonnables pour éviter tout gel du banc de test.
+- **Zero Network Dependency in Tests**: All test suites must be executable in offline mode (`--offline`).
+- **CBOR & EID Encoding/Decoding Tests**: Validate that Endpoint Identifiers (EIDs) and BPv7 blocks (RFC 9171) conform to specifications and are protected against integer overflows or unbounded allocations.
+- **BPSec Verification**:
+  - Test all three policy modes (`Strict`, `Warn`, `Ignore`).
+  - Verify that under `VerifyPolicy::Strict`, unsigned bundles (`Unsigned`), bundles with missing keys (`MissingKey`), or corrupted bundles (`Invalid`) are systematically rejected.
+- **Sanitization and Memory Bounds**:
+  - Validate filename sanitization in `dtnfiles` (protection against relative paths, escape characters, and overly long names).
+  - Validate whitelist filtering of journald units in `hdy-stats` (rejection of leading dashes and injection metacharacters).
+  - Validate SQL filter queries `--addr` and `--limit` in `dtnquery`.
 
 ---
 
-## 3. Couverture de Code (`cargo-llvm-cov`)
+## 2. Integration Tests & Service Mocks
 
-Pour surveiller l'absence de régression dans la couverture des tests :
-- Rapport console synthétique : `./scripts/check-coverage.sh --summary-only`
-- Rapport complet : `./scripts/check-coverage.sh`
-- Rapport HTML interactif : `./scripts/check-coverage.sh --html` (disponible sous `target/llvm-cov/html/index.html`)
-- Export CI : `./scripts/check-coverage.sh --lcov` (génère `lcov.info`)
+- Integration tests simulate real interactions between components:
+  - **`iam_integration_test.rs`**: Validates PBAC access control, user management, sessions, and service registration via the gRPC gateway and UNIX socket.
+  - **`bpsec_chat_files_test.rs`**: Validates the full BPSec signing and verification chain for the Chat and Files modules.
+  - **`ham_server_test.rs`**: Validates `dtnpm` server initialization with various TOML/YAML configurations, configuration parity, and CLA management.
+  - **`bundle_inspector_test.rs`**: Validates bundle inspection in memory and on SQLite disk storage.
+- Asynchronous tests use `tokio::test` with reasonable timeouts to prevent test harness hangs.
+
+---
+
+## 3. Code Coverage (`cargo-llvm-cov`)
+
+To monitor for regressions in test coverage:
+- Concise console report: `./scripts/check-coverage.sh --summary-only`
+- Full report: `./scripts/check-coverage.sh`
+- Interactive HTML report: `./scripts/check-coverage.sh --html` (available at `target/llvm-cov/html/index.html`)
+- CI export: `./scripts/check-coverage.sh --lcov` (generates `lcov.info`)
 
 > [!NOTE]
-> Ne jamais commiter de fichier `lcov.info` ou `sbom.json` généré localement dans l'arbre de travail Git.
+> Never commit locally generated `lcov.info` or `sbom.json` files to the Git working tree.
 
 ---
 
-## 4. Matrice de Validation Pré-Livraison
+## 4. Pre-Delivery Validation Matrix
 
-Avant de finaliser une tâche ou de créer un commit, exécuter obligatoirement :
+Before finalizing a task or creating a commit, you must run:
 
 1. `cargo fmt --all -- --check`
 2. `cargo clippy --offline --workspace --lib --bins -- -D warnings -D clippy::unwrap_used -D clippy::panic`
 3. `cargo test --offline --all-targets`
-4. Profils spécifiques :
+4. Specific profiles:
    - `cargo check --offline --no-default-features --features "amsat"`
    - `cargo check --offline --no-default-features --features "node-headless"`
    - `cargo check --offline --no-default-features --features "webui-remote"`
-5. Audit de sécurité : `./scripts/check-security.sh --strict`
+5. Security audit: `./scripts/check-security.sh --strict`

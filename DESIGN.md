@@ -180,33 +180,33 @@ Monospace (EIDs, Callsigns, Telemetry, Hex, Logs):
 
 ### 5.1. Navigation Architecture (5 Lean Core Views + Station Sub-Navigation)
 
-Pour offrir une ergonomie lean et optimale sur les écrans de terrain (tactiles, smartphones en extérieur, gants), la navigation principale est épurée à 5 vues applicatives centrées sur l'utilisateur DTN, tandis que la gestion et le diagnostic station sont regroupés au sein d'onglets secondaires dans **Station** :
+To provide lean and optimal ergonomics on field screens (touchscreens, outdoor smartphones, gloved hands), primary navigation is streamlined into 5 DTN user-centric application views, while station management and diagnostics are grouped into secondary tabs under **Station**:
 
 ```
 [📡 Hardy BPA Hamradio]  [🟢 Live] [F4JDR · dtn://f4jdr/]  [🔔] [🌙]
 ----------------------------------------------------------------------
-Navigation principale (5 onglets) :
+Primary Navigation (5 tabs):
 [⚙️ Station] [💬 Chat (3)] [📁 Files (1)] [📊 SenML] [✉️ Send Bundle]
 ```
 
-#### Vues Principales DTN
-1. **`⚙️ Station` (`ConfigView.tsx`)**: Hub d'administration, surveillance et configuration de la station radio DTN (voir sous-navigation ci-dessous).
-2. **`💬 Chat` (`ChatView.tsx`)**: Fils de discussion pair-à-pair (`dtn://<peer>/chat`), statut de livraison des outbox (⏳ En attente, 📤 Émis, ✅ Livré), bulles Markdown sécurisées, compteurs de non-lus.
-3. **`📁 Files` (`FilesView.tsx`)**: Explorateur de fichiers permanents reçus/stockés sur `dtn://<node>/files`, épinglage persistant anti-reaper, prévisualisation multi-formats (Markdown, Audio, Images, Hex).
-4. **`📊 SenML` (`SenmlView.tsx`)**: Tableaux de bord IoT/télémétrie RFC 8428 (`SENML_LAST`), heure UTC/relative, réorganisation par drag-and-drop, alias personnalisés.
-5. **`✉️ Send Bundle` (`SendBundleView.tsx`)**: Répartiteur générique de bundles pour messages ad-hoc, fichiers joints et enregistrement audio de notes vocales (remuxing WebM $\rightarrow$ Ogg/Opus).
+#### Main DTN Views
+1. **`⚙️ Station` (`ConfigView.tsx`)**: Administration, monitoring, and configuration hub for the DTN radio station (see sub-navigation below).
+2. **`💬 Chat` (`ChatView.tsx`)**: Peer-to-peer conversation threads (`dtn://<peer>/chat`), outbox delivery status (⏳ Pending, 📤 Sent, ✅ Delivered), sanitized Markdown bubbles, unread counters.
+3. **`📁 Files` (`FilesView.tsx`)**: Explorer for permanent files received/stored on `dtn://<node>/files`, persistent anti-reaper pinning, multi-format preview (Markdown, Audio, Images, Hex).
+4. **`📊 SenML` (`SenmlView.tsx`)**: RFC 8428 IoT/telemetry dashboards (`SENML_LAST`), UTC/relative time, drag-and-drop reordering, custom aliases.
+5. **`✉️ Send Bundle` (`SendBundleView.tsx`)**: Generic bundle dispatcher for ad-hoc messages, file attachments, and voice note audio recording (WebM $\rightarrow$ Ogg/Opus remuxing).
 
-#### Sous-Navigation « Station » (6 sous-onglets)
-Accessible via la barre de segmentation horizontale sous l'en-tête de la station :
-* **`📡 Liaisons & Radio` (`radio`)**: Carte d'identité radio, moteur de stockage, interfaces réseau, services DTN actifs (Echo, etc.), et adaptateurs de couche de convergence (CLAs) avec statut et connexion forcée.
-* **`🧭 Routage (RIB)` (`routes`)**: Table des routes statiques BPv7 injectées dans le RIB, formulaire d'ajout dynamique et suppression sans redémarrage.
-* **`🛡️ Sécurité BPSec` (`security`)**: Gestionnaire de clés HMAC-SHA256 (RFC 9103 / RFC 9172), trousseau local protégé (`keystore.toml`), sélecteur de politique d'ingestion (Strict, Warn, Ignore) et générateur aléatoire 256 bits.
-* **`📦 Stockage & Paquets` (`bundles`)**: Inspecteur de la base de données locale des bundles (Inbox, Outbox, Delivered), détails complets, badge de confiance cryptographique et visionneuse hexadécimale.
-* **`📟 Traces & Diagnostic` (`logs`)**: Console de logs en temps réel connectée au tampon circulaire en mémoire (SSE), filtres de niveau (`INFO`, `WARN`, `ERROR`), recherche plein-texte et gel du défilement.
-* **`⚙️ Configuration JSON` (`advanced`)**: Visualiseur de la configuration active complète au format JSON avec bouton de copie en 1 clic.
+#### "Station" Sub-Navigation (6 sub-tabs)
+Accessible via the horizontal segmented bar below the station header:
+* **`📡 Links & Radio` (`radio`)**: Radio identity card, storage engine, network interfaces, active DTN services (Echo, etc.), and Convergence Layer Adapters (CLAs) with status and forced connection.
+* **`🧭 Routing (RIB)` (`routes`)**: Table of static BPv7 routes injected into the RIB, dynamic addition form, and removal without restart.
+* **`🛡️ BPSec Security` (`security`)**: HMAC-SHA256 key manager (RFC 9103 / RFC 9172), protected local keystore (`keystore.toml`), ingestion policy selector (Strict, Warn, Ignore), and 256-bit random generator.
+* **`📦 Storage & Bundles` (`bundles`)**: Local bundle database inspector (Inbox, Outbox, Delivered), full details, cryptographic trust badge, and hex viewer.
+* **`📟 Logs & Diagnostics` (`logs`)**: Real-time log console connected to the in-memory ring buffer (SSE), level filters (`INFO`, `WARN`, `ERROR`), full-text search, and scroll freeze.
+* **`⚙️ JSON Config` (`advanced`)**: Full active configuration viewer in JSON format with a 1-click copy button.
 
-Deep-linking et rétrocompatibilité des URLs supportés via le hash :
-`#/station/radio`, `#/station/routes`, `#/station/security`, `#/station/bundles`, `#/station/logs`, `#/station/advanced` (avec alias automatiques pour `#/bundles`, `#/logs` et `#/config`).
+Deep-linking and URL backward compatibility are supported via the hash:
+`#/station/radio`, `#/station/routes`, `#/station/security`, `#/station/bundles`, `#/station/logs`, `#/station/advanced` (with automatic aliases for `#/bundles`, `#/logs`, and `#/config`).
 
 ### 5.2. Viewport Adaptation
 

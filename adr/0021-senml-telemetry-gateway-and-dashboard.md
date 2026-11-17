@@ -74,9 +74,9 @@ We introduce a complete, high-performance SenML telemetry subsystem in `dtn-hdy-
   senml:
     metrics:
       - name: "urn:dtn:node1:power/bus_voltage"
-        label: "Tension Bus"
+        label: "Bus Voltage"
       - name: "urn:dtn:node1:temp/ambient"
-        label: "Température Ambiante"
+        label: "Ambient Temperature"
   ```
 - Loaded on daemon startup to initialize visible dashboard cards and aliases.
 - Auto-discovered metrics from received bundles are persisted in `telemetry_history` and `metric_dictionary` with `is_visible = 0`.
@@ -89,7 +89,7 @@ We introduce a complete, high-performance SenML telemetry subsystem in `dtn-hdy-
   - Formatted measurement value with unit badge.
   - Relative time elapsed and absolute UTC timestamp tooltip.
   - Up/Down reordering arrows and remove button.
-- Top action bar featuring "+ Ajouter une carte" (modal with discovered metric selection) and "Tout effacer".
+- Top action bar featuring "+ Add Card" (modal with discovered metric selection) and "Clear All".
 - Reactive live value updates connected to the SSE telemetry stream.
 
 ## Consequences

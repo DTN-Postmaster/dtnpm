@@ -479,68 +479,68 @@ flowchart TD
 
 #### Prioritized Security Matrix:
 
-##### Priorité 1 : Hygiène immédiate, Secrets & Audit des dépendances (Implémentation immédiate)
-* [x] **Secret Scanning (Gitleaks)** :
-  * Détection proactive des secrets, clés privées, jetons API et HMAC avant commit et dans la CI.
-  * Fichier de configuration `.gitleaks.toml` dédié, intégrant des règles adaptées et allowlistant les fixtures de test et clés factices DTN/BPSec.
-* [x] **Audit des vulnérabilités logicielles des dépendances (RustSec & Frontend)** :
-  * Audit des crates Rust via `cargo audit` adossé à la base RustSec Advisory Database.
-  * Audit des dépendances Web Preact/Vite via `pnpm audit` / `npm audit`.
-* [x] **Script d'exécution local unifié (`scripts/check-security.sh`)** :
-  * Outil CLI simple, rapide (< 5 secondes) et reproductible exécutable par l'agent ou le développeur en amont de tout commit.
-  * Mode permissif/guidé en local (affichage clair des commandes d'installation si un binaire manque) et mode strict (bloquant, code de retour non-nul) en CI.
-* [x] **Intégration CI GitHub Actions (`.github/workflows/ci.yml`)** :
-  * Ajout d'une étape ou d'un job de vérification de sécurité automatisé sur chaque Pull Request et push sur `main`.
-* [x] **Mise à jour des consignes de développement (`AGENTS.md`)** :
-  * Ajout de `./scripts/check-security.sh` dans les vérifications impératives de l'agent.
+##### Priority 1: Immediate Hygiene, Secrets & Dependency Auditing (Immediate Implementation)
+* [x] **Secret Scanning (Gitleaks)**:
+  * Proactive detection of secrets, private keys, API tokens, and HMAC keys before commit and in CI.
+  * Dedicated `.gitleaks.toml` configuration file, integrating tailored rules and allowlisting test fixtures and dummy DTN/BPSec keys.
+* [x] **Software Dependency Vulnerability Auditing (RustSec & Frontend)**:
+  * Rust crate auditing via `cargo audit` backed by the RustSec Advisory Database.
+  * Preact/Vite web dependency auditing via `pnpm audit` / `npm audit`.
+* [x] **Unified Local Runner Script (`scripts/check-security.sh`)**:
+  * Simple, fast (< 5 seconds), and reproducible CLI tool executable by the agent or developer prior to any commit.
+  * Permissive/guided mode locally (clear display of installation commands if a binary is missing) and strict mode (blocking, non-zero exit code) in CI.
+* [x] **GitHub Actions CI Integration (`.github/workflows/ci.yml`)**:
+  * Added an automated security check step or job on every Pull Request and push to `main`.
+* [x] **Updated Development Guidelines (`AGENTS.md`)**:
+  * Added `./scripts/check-security.sh` to the mandatory agent verification checks.
 
-##### Priorité 2 : Conformité des licences, bannissement de dépendances & Couverture de tests
-* [x] **Gouvernance des licences et doublons (`cargo-deny`)** :
-  * Validation stricte des licences autorisées (MIT, Apache-2.0, BSD-3-Clause) et blocage des licences restrictives ou incompatibles (GPLv3 virale non souhaitée sur les bibliothèques) via `deny.toml`.
-  * Détection et interdiction des failles d'advisory, bans et sources non autorisées intégrées dans `scripts/check-security.sh` et la CI.
-* [x] **Surveillance de la couverture de code (`cargo-llvm-cov`)** :
-  * Intégration de la couverture source native LLVM (`cargo-llvm-cov`) via le script unifié `scripts/check-coverage.sh` (console, HTML et export LCOV).
-  * Mesure globale sur l'ensemble du workspace (>65% couverture globale, >90% sur `ltp`, `pacing`, `keystore`, et parsers SenML).
-  * Job automatisé `code-coverage` dans GitHub Actions (`.github/workflows/ci.yml`) avec génération d'artéfact LCOV.
-* [x] **Garde-fous Zéro-Panic et Zéro-Unwrap (Clippy & Linter)** :
-  * Interdiction stricte de `.unwrap()` et `panic!()` dans le code de production (`--lib`, `--bins`).
-  * Encodage `clippy::unwrap_used` et `clippy::panic` en erreur bloquante et vérification dans l'étape `[2/6]` de `check-security.sh`.
-* [x] **Hook Git Pre-Commit Automatisé (`scripts/install-hooks.sh`)** :
-  * Installation de `.git/hooks/pre-commit` bloquant localement tout commit non conforme aux 6 étapes de sécurité.
-* [x] **Tests Fuzzing Continus (Continuous Fuzz Smoke Testing)** :
-  * Cibles `cargo-fuzz` sur le décodage LTP et le parsing de trames HQFBP (`segment_decode`, `sdnv_kiss`, `parse_frame`).
-  * Job automatisé `fuzz-smoke-tests` dans GitHub Actions CI.
-* [x] **Mutation Testing & Robustesse des Tests (`cargo-mutants`)** :
-  * Exécution de `cargo-mutants` sur `cla-commons` avec 100% de neutralisation des mutants (24 tués, 3 timeouts, 0 manqués).
+##### Priority 2: License Compliance, Dependency Banning & Test Coverage
+* [x] **License and Duplicate Governance (`cargo-deny`)**:
+  * Strict validation of allowed licenses (MIT, Apache-2.0, BSD-3-Clause) and blocking of restrictive or incompatible licenses (unwanted viral GPLv3 on libraries) via `deny.toml`.
+  * Detection and prohibition of advisory vulnerabilities, bans, and unauthorized sources integrated into `scripts/check-security.sh` and CI.
+* [x] **Code Coverage Monitoring (`cargo-llvm-cov`)**:
+  * Integration of native LLVM source coverage (`cargo-llvm-cov`) via the unified `scripts/check-coverage.sh` script (console, HTML, and LCOV export).
+  * Workspace-wide measurement (>65% overall coverage, >90% on `ltp`, `pacing`, `keystore`, and SenML parsers).
+  * Automated `code-coverage` job in GitHub Actions (`.github/workflows/ci.yml`) with LCOV artifact generation.
+* [x] **Zero-Panic and Zero-Unwrap Guardrails (Clippy & Linter)**:
+  * Strict prohibition of `.unwrap()` and `panic!()` in production code (`--lib`, `--bins`).
+  * Enforced `clippy::unwrap_used` and `clippy::panic` as blocking errors and checked in step `[2/6]` of `check-security.sh`.
+* [x] **Automated Pre-Commit Git Hook (`scripts/install-hooks.sh`)**:
+  * Installs `.git/hooks/pre-commit` locally blocking any commit that fails the 6 security steps.
+* [x] **Continuous Fuzz Smoke Testing**:
+  * `cargo-fuzz` targets on LTP decoding and HQFBP frame parsing (`segment_decode`, `sdnv_kiss`, `parse_frame`).
+  * Automated `fuzz-smoke-tests` job in GitHub Actions CI.
+* [x] **Mutation Testing & Test Robustness (`cargo-mutants`)**:
+  * Executed `cargo-mutants` on `cla-commons` with 100% mutant neutralization (24 killed, 3 timeouts, 0 missed).
 
-##### Priorité 3 : Analyse sémantique avancée (SAST) & Sécurité mémoire
-* [ ] **Analyse statique approfondie (GitHub CodeQL / Semgrep)** :
-  * Détection sémantique des vulnérabilités web/API (traversée de répertoires sur `/api/v1/files`, SSRF, désérialisation non bornée, injections).
-* [ ] **Audit du code `unsafe` (`cargo-geiger`)** :
-  * Cartographie et contrôle continu du code `unsafe` direct et transitif dans l'écosystème Rust utilisé.
+##### Priority 3: Advanced Semantic Analysis (SAST) & Memory Security
+* [ ] **Deep Static Analysis (GitHub CodeQL / Semgrep)**:
+  * Semantic detection of web/API vulnerabilities (directory traversal on `/api/v1/files`, SSRF, unbounded deserialization, injections).
+* [ ] **Unsafe Code Audit (`cargo-geiger`)**:
+  * Mapping and continuous monitoring of direct and transitive `unsafe` code in the Rust ecosystem used.
 
 ---
 
-### Phase 10: Contact Scheduling & Topology Management — Planification Cron vs `hardy-tvr` (Time-Variant Routing)
-> **Goal**: Clarifier, faire évoluer et unifier la planification temporelle des contacts pour les liaisons radioamateurs intermittentes, en articulant le coordinateur cron existant avec l'architecture Time-Variant Routing (`hardy-tvr`).
+### Phase 10: Contact Scheduling & Topology Management — Cron Scheduling vs `hardy-tvr` (Time-Variant Routing)
+> **Goal**: Clarify, evolve, and unify temporal contact scheduling for intermittent amateur radio links, bridging the existing cron coordinator with the Time-Variant Routing (`hardy-tvr`) architecture.
 
-#### Contexte & Analyse comparative :
-* **Approche actuelle (`dtn-hdy-ham` Coordinator)** :
-  * Planification périodique basée sur la syntaxe cron (ex: `schedule.cron: "*/43 * * * *"` avec `duration: "300s"`).
-  * Optimisée pour les cycles d'écoute et de veille radioamateurs terrestres (réveil HF/VHF régulier, économie d'énergie sur batteries solaires de relais).
-  * Déclenche l'ouverture et la fermeture des sessions CLA de façon déterministe au niveau local.
-* **Approche Hardy Upstream (`hardy-tvr`)** :
-  * Implémentation du standard TVR (Time-Variant Routing) adossée à un graphe spatio-temporel de contacts planifiés (Contact Plans).
-  * Idéale pour les fenêtres orbitales (satellites LEO, CubeSats, passages de stations spatiales) avec débuts/fins d'opportunités absolus et variations de bande passante/délai.
+#### Context & Comparative Analysis:
+* **Current Approach (`dtn-hdy-ham` Coordinator)**:
+  * Periodic scheduling based on cron syntax (e.g., `schedule.cron: "*/43 * * * *"` with `duration: "300s"`).
+  * Optimized for terrestrial amateur radio listening and standby cycles (regular HF/VHF wakeups, power saving on solar-powered relay batteries).
+  * Triggers CLA session opening and closing deterministically at the local level.
+* **Upstream Hardy Approach (`hardy-tvr`)**:
+  * Implementation of the TVR (Time-Variant Routing) standard backed by a spatiotemporal graph of scheduled contacts (Contact Plans).
+  * Ideal for orbital windows (LEO satellites, CubeSats, space station passes) with absolute opportunity start/end times and bandwidth/delay variations.
 
-#### Livrables & Évolutions envisagées :
-1. **Pérennisation et enrichissement du planificateur Cron** :
-   * [x] Support des plannings de contact récurrents sur les CLA TCPCLv4 et Mercury (`coordinator/mod.rs`).
-   * [ ] Visualisation temporelle des prochaines fenêtres de contact dans l'IHM Web (sous-onglet Station > Radio).
-   * [ ] Déclenchement manuel "Force Contact Now" depuis l'interface d'administration.
-2. **Passerelle et interopérabilité avec `hardy-tvr`** :
-   * Évaluer l'importation de plans de contact TVR standards (format JSON/tableaux d'opportunités) pour les passerelles sol/satellite amateur (passages de satellites radioamateurs OSCAR / AMSAT).
-   * Permettre à `dtn-hdy-ham` d'agir comme agent de contact hybride : exécution des règles cycliques (cron) en local, avec possibilité d'ingérer un contact plan satellite issu de `hardy-tvr`.
+#### Deliverables & Planned Evolutions:
+1. **Sustaining and Enriching the Cron Scheduler**:
+   * [x] Support for recurring contact schedules on TCPCLv4 and Mercury CLAs (`coordinator/mod.rs`).
+   * [ ] Temporal visualization of upcoming contact windows in the Web UI (Station > Radio sub-tab).
+   * [ ] Manual "Force Contact Now" trigger from the administration interface.
+2. **Gateway and Interoperability with `hardy-tvr`**:
+   * Evaluate importing standard TVR contact plans (JSON format / opportunity tables) for amateur ground/satellite gateways (OSCAR / AMSAT amateur radio satellite passes).
+   * Enable `dtn-hdy-ham` to act as a hybrid contact agent: executing local cyclic rules (cron) while optionally ingesting a satellite contact plan from `hardy-tvr`.
 
 ---
 

@@ -76,8 +76,9 @@ jobs:
       - name: Checkout Hardy DTN workspace
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          repository: ricktaylor/hardy
+          repository: loic-fejoz/hardy
           path: hardy
+          ref: main-dtnpm
       - name: Checkout hqfbp-rs
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -123,6 +124,11 @@ jobs:
         with:
           repository: dtn-postmaster/dtnpm-mod-senml
           path: dtn-postmaster/dtnpm-mod-senml
+      - name: Checkout dtnpm-mod-rego-routing
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: dtn-postmaster/dtnpm-mod-rego-routing
+          path: dtn-postmaster/dtnpm-mod-rego-routing
       - name: Checkout dtnpm
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -205,8 +211,9 @@ jobs:
       - name: Checkout Hardy DTN workspace
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          repository: ricktaylor/hardy
+          repository: loic-fejoz/hardy
           path: hardy
+          ref: main-dtnpm
       - name: Checkout hqfbp-rs
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -252,6 +259,11 @@ jobs:
         with:
           repository: dtn-postmaster/dtnpm-mod-senml
           path: dtn-postmaster/dtnpm-mod-senml
+      - name: Checkout dtnpm-mod-rego-routing
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: dtn-postmaster/dtnpm-mod-rego-routing
+          path: dtn-postmaster/dtnpm-mod-rego-routing
       - name: Checkout dtnpm
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:

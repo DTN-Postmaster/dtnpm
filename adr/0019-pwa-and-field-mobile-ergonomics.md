@@ -32,12 +32,12 @@ We transform the `dtn-hdy-ham` web interface into an installable, offline-resili
   - Real-time SSE streaming (`/api/v1/events*`) and state-mutating requests (POST, DELETE) are strictly Network-Only, bypassing the cache.
 - **Cache Lifecycle & Background Updates**:
   - Service Worker automatically checks for newer deployments in the background.
-  - When an update is detected, an unobtrusive banner notifies the operator (*"⚡ Nouvelle version disponible — [Mettre à jour]"*), activating `skipWaiting()` and purging stale caches upon confirmation.
+  - When an update is detected, an unobtrusive banner notifies the operator (*"⚡ New version available — [Update]"*), activating `skipWaiting()` and purging stale caches upon confirmation.
 
 ### 3. In-App Installation Flow (A2HS)
 - Listens for the `beforeinstallprompt` browser event.
-- Displays a dedicated `"📲 Installer"` button in the navigation header when eligible.
-- Provides accessible step-by-step guidance for iOS/Safari operators (*"Partager ⎋ > Sur l'écran d'accueil ➕"*).
+- Displays a dedicated `"📲 Install"` button in the navigation header when eligible.
+- Provides accessible step-by-step guidance for iOS/Safari operators (*"Share ⎋ > Add to Home Screen ➕"*).
 
 ### 4. Field Touch Ergonomics & Thumb-Friendly Navigation
 - **Responsive Layout Split**:

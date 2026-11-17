@@ -1,232 +1,231 @@
-# Liste des Évolutions Potentielles à Évaluer
+# List of Potential Evolutions to Evaluate
 
-Ce document recense les propositions d'évolutions fonctionnelles, architecturales et ergonomiques pour la suite logicielle DTN (`dtn-hdy-utils` et le serveur/BPA autonome `dtn-hdy-ham`). Chaque proposition fait l'objet d'une évaluation préliminaire détaillant le contexte, les bénéfices, les points d'attention et la recommandation d'implémentation.
-
----
-
-## 1. Migration du moteur Markdown vers une bibliothèque éprouvée (`marked` + `DOMPurify`)
-
-### Description et cas d'usage
-Remplacer le parseur regex fait maison ([`markdown.ts`](file:///home/loic/projets/dtn-hdy-utils/dtn-hdy-ham/web/src/utils/markdown.ts)) par le moteur standard `marked` associé au santiseur HTML `DOMPurify` au sein de l'interface Preact (`dtn-hdy-ham/web`).
-
-### Bénéfices attendus
-- **Conformité stricte CommonMark / GitHub Flavored Markdown (GFM)** : Prise en charge native et sans faille des tableaux, listes imbriquées, blocs de citations (`>`), liens complexes avec parenthèses imbriquées et ponctuations attenantes.
-- **Sécurité XSS renforcée et pérenne** : `DOMPurify` est activement maintenu et audité par des spécialistes en sécurité web, immunisant l'IHM contre les contournements sophistiqués (DOM clobbering, mXSS, entités malicieuses).
-
-### Défis techniques et inconvénients
-- **Poids du bundle web** : Ajoute environ 25 à 35 Ko (gzippé) au bundle de l'interface web embarquée.
-- **Support des schémas d'URI personnalisés** : Nécessite de configurer explicitement `DOMPurify` (`ALLOWED_URI_REGEXP` ou hooks) pour autoriser le schéma `dtn://`, qui est bloqué par défaut.
-- **Styling** : Nécessite un renderer `marked` personnalisé pour conserver les classes Tailwind CSS actuelles.
-
-### Statut d'évaluation
-> **Recommandé** si l'usage évolue vers l'échange de notes ou documentations structurées (tableaux, citations). L'implémentation regex actuelle reste suffisante pour du chat simple et des aperçus rapides.
+This document catalogs functional, architectural, and ergonomic evolution proposals for the DTN software suite (`dtn-hdy-utils` and the standalone `dtn-hdy-ham` server/BPA). Each proposal includes a preliminary evaluation detailing context, benefits, points of attention, and implementation recommendation.
 
 ---
 
-## 2. Nommage dynamique et extension automatique au téléchargement de fichiers
+## 1. Migration of the Markdown Engine to a Proven Library (`marked` + `DOMPurify`)
 
-### Description et cas d'usage
-Lors du téléchargement d'un fichier reçu sans extension ou typé génériquement `application/octet-stream`, utiliser le type MIME auto-détecté par le backend pour générer un nom de fichier suggéré cohérent via l'en-tête HTTP `Content-Disposition: attachment; filename="..."` ou l'attribut `download` de l'IHM.
+### Description and Use Case
+Replace the custom regex parser ([`markdown.ts`](file:///home/loic/projets/dtn-hdy-utils/dtn-hdy-ham/web/src/utils/markdown.ts)) with the standard `marked` engine paired with the `DOMPurify` HTML sanitizer inside the Preact UI (`dtn-hdy-ham/web`).
 
-### Bénéfices attendus
-- **Expérience utilisateur transparente** : Évite à l'opérateur d'ouvrir un fichier `.bin` ou sans extension et de devoir deviner manuellement l'application associée (ex: `.gpx`, `.sqlite`, `.svg`, `.pdf`).
-- **Cohérence système** : L'OS hôte de l'utilisateur associe immédiatement l'application correcte au double-clic.
+### Expected Benefits
+- **Strict CommonMark / GitHub Flavored Markdown (GFM) compliance**: Native, reliable support for tables, nested lists, blockquotes (`>`), complex links with nested parentheses, and adjacent punctuation.
+- **Stronger, long-term XSS security**: `DOMPurify` is actively maintained and audited by web security specialists, protecting the UI against sophisticated bypasses (DOM clobbering, mXSS, malicious entities).
 
-### Défis techniques et inconvénients
-- Nécessite de maintenir une table inverse robuste MIME -> Extension par défaut dans `files_service.rs` et/ou côté frontend.
-- Gestion des collisions si le nom d'origine contient déjà une extension différente de celle détectée.
+### Technical Challenges and Drawbacks
+- **Web bundle size**: Adds approximately 25 to 35 KB (gzipped) to the embedded web UI bundle.
+- **Custom URI scheme support**: Requires explicitly configuring `DOMPurify` (`ALLOWED_URI_REGEXP` or hooks) to allow the `dtn://` scheme, which is blocked by default.
+- **Styling**: Requires a custom `marked` renderer to preserve existing Tailwind CSS classes.
 
-### Statut d'évaluation
-> **Priorité haute** : Faible coût de développement, valeur d'usage immédiate pour les opérateurs radio recevant des fichiers de terrain.
-
----
-
-## 3. Prévisualisation cartographique intégrée des tracés géospatiaux (GPX, KML, GeoJSON)
-
-### Description et cas d'usage
-Intégrer une modale ou un volet cartographique léger (ex: basé sur [Leaflet](https://leafletjs.com/) avec tuiles locales mises en cache ou vectorielles) pour prévisualiser directement dans l'IHM de `dtn-hdy-ham` les fichiers de traces GPX, balises KML ou couches GeoJSON reçus par DTN.
-
-### Bénéfices attendus
-- **Pertinence opérationnelle terrain** : Permet aux équipes radio d'urgence ou de secours en zone blanche de visualiser immédiatement sur une carte des waypoints, traces de progression ou zones sinistrées sans logiciel tiers.
-- **Intégration naturelle** avec la télémétrie SenML et les paquets d'observation géolocalisés.
-
-### Défis techniques et inconvénients
-- **Mode hors-ligne strict** : En zone blanche / secours, aucune tuile OpenStreetMap distante n'est accessible via Internet. Nécessite soit une gestion de fond de carte hors-ligne (MBTiles / raster embarqué léger), soit un affichage pur du tracé vectoriel (coordonnées relatives, profil altimétrique).
-- Poids de la bibliothèque cartographique dans l'IHM.
-
-### Statut d'évaluation
-> **À évaluer** : Forte valeur métier en radioamateurisme et secours d'urgence, mais implique de définir la stratégie de fond de carte déconnecté.
+### Evaluation Status
+> **Recommended** if usage evolves toward exchanging structured notes or documentation (tables, blockquotes). The current regex implementation remains sufficient for simple chat and quick previews.
 
 ---
 
-## 4. Prévisualisation sécurisée des documents PDF dans l'IHM
+## 2. Dynamic Naming and Automatic Extension on File Download
 
-### Description et cas d'usage
-Permettre la consultation en lecture seule des documents PDF transmis via DTN (bulletins d'information, procédures d'urgence, météo) directement dans l'interface web de la station.
+### Description and Use Case
+When downloading a received file without an extension or typed generically as `application/octet-stream`, use the MIME type auto-detected by the backend to generate a consistent suggested filename via the HTTP `Content-Disposition: attachment; filename="..."` header or the UI `download` attribute.
 
-### Bénéfices attendus
-- Consultation rapide des procédures et bulletins sans quitter la station de gestion DTN.
-- Évite les allers-retours avec un lecteur externe sur tablette ou mobile.
+### Expected Benefits
+- **Seamless user experience**: Avoids forcing the operator to open a `.bin` or extensionless file and manually guess the associated application (e.g., `.gpx`, `.sqlite`, `.svg`, `.pdf`).
+- **OS consistency**: The user's host OS immediately associates the right application on double-click.
 
-### Défis techniques et inconvénients
-- **Sécurité** : L'affichage direct via une balise `<iframe src="/api/files/download/...">` peut exposer à des vulnérabilités si le PDF contient du JavaScript embarqué. Nécessite une sandbox stricte (`sandbox="allow-scripts"` restreint) ou un rendu via PDF.js dans un canvas isolé.
-- **Poids** : PDF.js complet est volumineux (~300 Ko gzippé) pour une station embarquée basse consommation (Raspberry Pi).
+### Technical Challenges and Drawbacks
+- Requires maintaining a robust reverse MIME -> default extension mapping table in `files_service.rs` and/or on the frontend.
+- Handling collisions when the original filename already has a different extension from the detected one.
 
-### Statut d'évaluation
-> **À évaluer** : Tester la faisabilité d'un simple `iframe` sandboxed natif au navigateur avant d'envisager une bibliothèque dédiée.
-
----
-
-## 5. Inspection et exploration du contenu des archives (ZIP, TAR, GZ)
-
-### Description et cas d'usage
-Afficher dans le volet détail d'un fichier archive la liste des fichiers contenus (arborescence, tailles individuelles) sans exiger le téléchargement et l'extraction locale préalable.
-
-### Bénéfices attendus
-- Permet à l'opérateur de vérifier le contenu d'un paquet de fichiers avant de décider de le distribuer ou de le décompresser.
-- Évite les manipulations manuelles pour inspecter un panier `dtnbasket` ou un bundle groupé.
-
-### Défis techniques et inconvénients
-- Nécessite d'inspecter l'en-tête de l'archive côté backend Rust (`zip` ou `tar`) de manière sécurisée contre les "zip bombs" (limite sur le nombre d'entrées inspectées et profondeur d'arborescence).
-- Ajoute de légères dépendances de parsing d'en-têtes d'archives côté serveur.
-
-### Statut d'évaluation
-> **Moyenne priorité** : Très utile pour la transparence opérationnelle, simple à implémenter côté Rust de façon bornée.
+### Evaluation Status
+> **High priority**: Low development cost, immediate usability value for radio operators receiving field files.
 
 ---
 
-## 6. Barre d'outils d'assistance à la saisie Markdown dans le Chat
+## 3. Integrated Map Preview for Geospatial Tracks (GPX, KML, GeoJSON)
 
-### Description et cas d'usage
-Ajouter au-dessus du champ de texte du Chat ([`ChatView.tsx`](file:///home/loic/projets/dtn-hdy-utils/dtn-hdy-ham/web/src/components/ChatView.tsx)) une mini-barre d'outils ergonomique proposant des raccourcis : Gras (`**`), Italique (`*`), Code (` ` `), Lien Markdown (`[nom](url)`), et insertion rapide d'un identifiant EID (`dtn://...`).
+### Description and Use Case
+Integrate a lightweight modal or map pane (e.g., based on [Leaflet](https://leafletjs.com/) with locally cached or vector tiles) to preview GPX track files, KML markers, or GeoJSON layers received over DTN directly in the `dtn-hdy-ham` UI.
 
-### Bénéfices attendus
-- Réduit les erreurs de frappe de syntaxe Markdown sur mobile ou écran tactile de terrain.
-- Uniformise la mise en forme des messages sans obliger l'utilisateur à mémoriser la syntaxe.
+### Expected Benefits
+- **Field operational relevance**: Enables emergency or rescue radio teams in dead zones to immediately view waypoints, progression tracks, or disaster areas on a map without third-party software.
+- **Natural integration** with SenML telemetry and geolocated observation bundles.
 
-### Défis techniques et inconvénients
-- Ergonomie sur petits écrans (tablette/smartphone en PWA) : doit rester discret et ne pas masquer l'historique du chat lors de l'ouverture du clavier virtuel.
+### Technical Challenges and Drawbacks
+- **Strict offline mode**: In dead zones / disaster response, no remote OpenStreetMap tiles are accessible over the Internet. Requires either offline basemap management (MBTiles / lightweight embedded raster) or pure vector track rendering (relative coordinates, elevation profile).
+- Weight of the mapping library in the UI.
 
-### Statut d'évaluation
-> **Priorité haute** : Facile à intégrer dans le composant Preact existant, gain direct d'utilisabilité.
-
----
-
-## 7. Compression transparente à l'émission pour liaisons radio lentes
-
-### Description et cas d'usage
-Proposer une option de compression transparente (ex: Zstandard ou Deflate) des payloads de bundles volumineux (fichiers texte, JSON, SenML, logs) avant transmission via des CLA radio à très faible débit (Mercury TNC, KISS HF/VHF, LTP).
-
-### Bénéfices attendus
-- Réduction significative du temps d'occupation spectral (canal radio) pour les flux textuels et de télémétrie.
-- Réduction de la facture énergétique des émetteurs radio en émission prolongée.
-
-### Défis techniques et inconvénients
-- Doit être négocié ou signalé au niveau métadonnées du bundle ou type MIME pour que le nœud récepteur sache décompresser automatiquement.
-- Inutile (voire contre-productif) sur les fichiers déjà compressés (JPEG, PNG, MP4, archives ZIP).
-
-### Statut d'évaluation
-> **À planifier** : Requiert une spécification au niveau protocole d'application DTN ou profil de CLA pour garantir l'interopérabilité.
+### Evaluation Status
+> **To be evaluated**: High business value in amateur radio and emergency response, but requires defining the disconnected basemap strategy.
 
 ---
 
-## 8. Support des formulaires standardisés d'urgence (style Winlink / ICS-213)
+## 4. Secure PDF Document Preview in the UI
 
-### Description et cas d'usage
-Permettre la saisie, l'envoi, la réception et la consultation de formulaires opérationnels d'urgence standardisés (très répandus dans l'écosystème Winlink Standard Forms, les réseaux ARES, RACES et ADRASEC de Sécurité Civile) :
-- **Formulaires ICS (Incident Command System)** : ICS-213 (Message général), ICS-214 (Journal d'activité), ICS-205 (Plan radio).
-- **Rapports de situation et de pointage** : Check-in / Check-out de station, rapport météo simplifié, évaluation rapide des dégâts (Field Situation Report).
+### Description and Use Case
+Allow read-only viewing of PDF documents transmitted over DTN (newsletters, emergency procedures, weather) directly inside the station's web interface.
 
-Le système repose sur un modèle hybride sobre en bande passante :
-1. Des gabarits de formulaires (HTML/JSON) pré-embarqués dans l'IHM web de la station.
-2. Un échange radio ultra-compact : seules les données saisies (quelques centaines d'octets de JSON ou CBOR) transitent dans le payload du bundle DTN vers un endpoint dédié (ex: `dtn://station/forms` ou service Chat/Files).
-3. Une reconstitution visuelle fidèle à la réception reprenant la présentation réglementaire du formulaire, avec options d'impression papier propre ou export PDF.
+### Expected Benefits
+- Quick consultation of procedures and bulletins without leaving the DTN management station.
+- Avoids switching back and forth with an external reader on tablets or mobile devices.
 
-### Bénéfices attendus
-- **Interopérabilité et adoption opérationnelle** : Les services de secours et préfectures utilisent le cadre ICS. L'intégration directe dans `dtn-hdy-ham` positionne la solution comme une alternative résiliente et store-and-forward face à Winlink.
-- **Sobriété spectrale optimale** : Contrairement à l'envoi d'un PDF ou d'une capture d'écran, seuls les champs utiles sont véhiculés sur les liaisons HF/VHF (gain d'un facteur 50 à 100 sur le temps d'émission).
-- **Validation et guidage** : Champs obligatoires contrôlés, coordonnées GPS issues de la station, horodatage UTC certifié.
-- **Authentification BPSec** : Possibilité de signer cryptographiquement le formulaire avec la clé de la station (via le module BPSec/BIB déjà intégré dans `dtn-hdy-ham`) pour garantir l'inviolabilité des ordres de mission et rapports.
+### Technical Challenges and Drawbacks
+- **Security**: Direct rendering via an `<iframe src="/api/files/download/...">` tag can expose vulnerabilities if the PDF contains embedded JavaScript. Requires strict sandboxing (restricted `sandbox="allow-scripts"`) or rendering via PDF.js in an isolated canvas.
+- **Size**: Full PDF.js is large (~300 KB gzipped) for a low-power embedded station (Raspberry Pi).
 
-### Défis techniques et inconvénients
-- **Format de données (Inter-op Winlink vs Natif CBOR/JSON)** : Évaluer s'il faut analyser/générer le dialecte XML standard de Winlink Express pour créer des passerelles directes, ou adopter un format JSON/CBOR standardisé plus léger.
-- **Gestion du catalogue de gabarits** : Mécanisme de mise à jour des modèles sans recompiler toute l'application (ex: dossier de modèles personnalisables).
-- **Affichage dégradé** : Si une station reçoit un formulaire dont elle ne possède pas le gabarit local, nécessité d'un rendu générique tableau "clé / valeur".
-
-### Statut d'évaluation
-> **Priorité haute / Stratégique** : Évolution majeure à forte valeur ajoutée pour les transmissions d'urgence et la communauté radioamateur.
+### Evaluation Status
+> **To be evaluated**: Test the feasibility of a simple browser-native sandboxed `iframe` before considering a dedicated library.
 
 ---
 
-## 9. Vérification formelle et garanties d'absence totale de panics (`no-panic` & `cargo-kani`)
+## 5. Archive Content Inspection and Browsing (ZIP, TAR, GZ)
 
-### Description et cas d'usage
-Dans un réseau tolérant aux délais (DTN) et particulièrement en contexte d'urgence ou d'infrastructure radio isolée, un crash de processus (`panic!`) sur un nœud intermédiaire ou une station autonome interrompt le stockage et le réacheminement de tous les paquets en transit. Au-delà des règles de linting statique (`clippy::unwrap_used` et `clippy::panic`), il s'agit d'intégrer des outils de garantie mathématique et de link-time vérifiant l'absence absolue de panics sur les chemins d'exécution critiques :
+### Description and Use Case
+Display the list of contained files (directory tree, individual sizes) in the detail pane of an archive file without requiring prior local download and extraction.
 
-1. **Option A : Attribut de link-time `#[no_panic]` (David Tolnay)** :
-   * Permet d'annoter les fonctions critiques de bas niveau (parsers de paquets, décodeurs réseau, fonctions cryptographiques).
-   * Fonctionnement : S'appuie sur les optimisations du compilateur LLVM en mode `--release` (dead code elimination). Si le compilateur ne parvient pas à prouver qu'un chemin de panique est inaccessible, l'édition de liens échoue immédiatement avec un symbole manquant (`__no_panic`).
-   * *Cibles idéales* : Parsing des segments LTP (`hardy-ltp`), décodeur CBOR SenML (`senml/parser.rs`), désérialisation des métadonnées de paniers CoAP/CBOR (`dtnbasket`).
+### Expected Benefits
+- Allows the operator to verify the contents of a file package before deciding to distribute or decompress it.
+- Avoids manual steps to inspect a `dtnbasket` basket or a grouped bundle.
 
-2. **Option B : Bounded Model Checking avec Kani (`cargo-kani`, AWS)** :
-   * Vérificateur formel bit-précis basé sur des solveurs SMT/SAT (CBMC).
-   * Fonctionnement : Explore symboliquement l'ensemble infini des combinaisons d'octets d'entrée sur un "harness" de test formel pour prouver mathématiquement :
-     * Zéro déréférencement hors bornes (`slice out-of-bounds` sur les indices de trames).
-     * Zéro débordement arithmétique (`integer overflow`).
-     * Zéro panique implicite (`Option::unwrap()` ou `Result::unwrap()`).
-   * *Cibles idéales* : Machine à états finis de réassemblage LTP (`SessionFsm`), calcul des claims de segments, moteur de vérification BPSec/BIB (`keystore.rs`).
+### Technical Challenges and Drawbacks
+- Requires inspecting the archive header on the Rust backend (`zip` or `tar`) safely against "zip bombs" (limits on the number of inspected entries and tree depth).
+- Adds lightweight server-side archive header parsing dependencies.
 
-3. **Option C : Analyse statique de graphe d'appels (`cargo-call-stack` / Inspection de symboles)** :
-   * Avec `panic = "abort"` dans le profil de release, vérification que l'arbre d'appels des binaires compilés (`dtn-hdy-ham`, CLAs) ne référence pas les symboles de panique interne `core::panicking::panic` ou `rust_begin_unwind`.
-
-### Bénéfices attendus
-- **Résilience absolue sur liaisons radio bruitées** : Les trames corrompues ou fuzzées reçues par RF ne peuvent en aucun cas provoquer le crash du daemon.
-- **Zéro régression silencieuse** : Tout ajout de code potentiel provoquant un panic est détecté soit à la compilation (link-time), soit par les solveurs formels en CI.
-- **Zéro surcharge à l'exécution** : Contrairement aux défenses défensives dynamiques (catch_unwind), ces approches s'appuient sur l'élimination statique.
-
-### Défis techniques et inconvénients
-- **`#[no_panic]`** : Nécessite des builds optimisés (`--release`), car en mode debug sans optimisation LLVM, le compilateur ne simplifie pas les branches de vérification d'indices.
-- **Kani** : Les solveurs SMT requièrent des temps d'analyse plus longs en CI (plusieurs dizaines de secondes par harness) et imposent des bornes explicites (*unwind bounds*) sur les boucles dynamiques.
-
-### Statut d'évaluation
-> **Recommandé** : Intégration progressive en commençant par `#[no_panic]` sur les fonctions pures de parsing binaire de `hardy-ltp` et `senml`, puis écriture de harness Kani sur la FSM de session LTP.
+### Evaluation Status
+> **Medium priority**: Very useful for operational transparency, straightforward to implement in Rust in a bounded manner.
 
 ---
 
-## 10. Surcharge de configuration par variables d'environnement (`DTN_HDY_HAM__*`)
+## 6. Markdown Input Assistant Toolbar in Chat
 
-### Description et cas d'usage
-Conformément aux directives d'architecture de Hardy (`hardy/docs/design.md` §7), permettre la surcharge dynamique de toute clé de configuration par des variables d'environnement préfixées par `DTN_HDY_HAM__` avec séparateur double tiret bas `__` pour la hiérarchie imbriquée (ex: `DTN_HDY_HAM__CALLSIGN=F4XYZ`, `DTN_HDY_HAM__STORAGE__IN_MEMORY=true`, `DTN_HDY_HAM__WEB__ADDRESS="0.0.0.0:8088"`).
+### Description and Use Case
+Add an ergonomic mini-toolbar above the Chat text input ([`ChatView.tsx`](file:///home/loic/projets/dtn-hdy-utils/dtn-hdy-ham/web/src/components/ChatView.tsx)) offering shortcuts: Bold (`**`), Italic (`*`), Code (`` ` ``), Markdown Link (`[name](url)`), and quick insertion of an EID identifier (`dtn://...`).
 
-### Bénéfices attendus
-- **Déploiements conteneurisés simplifiés (Docker, Podman, Kubernetes)** : Permet de configurer une station DTN radioamateur complète via un fichier `docker-compose.yml` ou des variables d'environnement système sans injecter ni monter de volume de fichier de configuration.
-- **Intégration systemd** : Possibilité d'utiliser `EnvironmentFile=/etc/default/dtn-hdy-ham` dans l'unité systemd pour les déploiements d'infrastructure.
-- **Homogénéité avec l'écosystème Hardy** : Aligne `dtn-hdy-ham` avec le comportement standard des binaires `hardy-bpa-server` et `hardy-tcpclv4-server`.
+### Expected Benefits
+- Reduces Markdown syntax typing errors on mobile or field touchscreens.
+- Standardizes message formatting without requiring the user to memorize syntax.
 
-### Défis techniques et inconvénients
-- Nécessite d'ajouter la source `config::Environment::with_prefix("DTN_HDY_HAM").separator("__")` dans le constructeur de configuration de `HamConfig::load`.
-- Veiller à préserver la priorité : valeurs par défaut < fichier de configuration < variables d'environnement < arguments de ligne de commande (CLI).
+### Technical Challenges and Drawbacks
+- Ergonomics on small screens (tablet/smartphone in PWA mode): must remain unobtrusive and not obscure chat history when the virtual keyboard opens.
 
-### Statut d'évaluation
-> **Priorité haute / Facile** : Très faible coût de mise en œuvre dans `HamConfig::load`, gain opérationnel immédiat pour les conteneurs et déploiements automatisés.
+### Evaluation Status
+> **High priority**: Easy to integrate into the existing Preact component, direct usability gain.
 
 ---
 
-## 11. Intégration du CLA basé sur fichiers (`hardy-file-cla` / Sneakernet)
+## 7. Transparent Outbound Compression for Slow Radio Links
 
-### Description et cas d'usage
-Intégrer le crate officiel `hardy-file-cla` de Hardy au sein de `dtn-hdy-ham` afin de permettre l'échange et le relayage de bundles BPv7 à travers des répertoires du système de fichiers (dossiers entrants `inbox` et sortants `outbox`), idéaux pour le transport physique ("Sneakernet") sur clés USB, cartes SD ou dossiers partagés synchronisés (Syncthing, Nextcloud, rsync).
+### Description and Use Case
+Offer a transparent compression option (e.g., Zstandard or Deflate) for large bundle payloads (text files, JSON, SenML, logs) prior to transmission over very low-bitrate radio CLAs (Mercury TNC, KISS HF/VHF, LTP).
 
-### Bénéfices attendus
-- **Résilience absolue en blackout total** : Même sans aucune liaison radio HF/VHF disponible ni connectivité IP, deux stations peuvent échanger des messages, fichiers de secours et télémétrie par simple transfert physique d'une clé USB.
-- **Passerelle hybride Air-Gap** : Permet à une station isolée non connectée à Internet de transférer des bundles vers une passerelle via un média amovible.
-- **Standardisation** : Réutilise directement le composant officiel `hardy-file-cla` maintenu dans l'arborescence Hardy.
+### Expected Benefits
+- Significant reduction in spectrum occupancy time (radio channel) for text and telemetry streams.
+- Reduced power consumption for radio transmitters during extended transmissions.
 
-### Défis techniques et inconvénients
-- Surveillance de répertoire (polling vs notifications inotify/kqueue).
-- Gestion des permissions de fichiers sur médias amovibles (systèmes de fichiers FAT32/exFAT sans permissions POSIX).
-- Prise en compte dans l'IHM web (affichage de l'état du CLA fichier et du nombre de paquets déposés/lus).
+### Technical Challenges and Drawbacks
+- Must be negotiated or signaled at the bundle metadata or MIME type level so the receiving node knows to decompress automatically.
+- Useless (or counterproductive) on already-compressed files (JPEG, PNG, MP4, ZIP archives).
 
-### Statut d'évaluation
-> **Recommandé** : Forte pertinence pour les exercices de Sécurité Civile et réseaux d'urgence en zone sinistrée.
+### Evaluation Status
+> **To be planned**: Requires specification at the DTN application protocol level or CLA profile to guarantee interoperability.
 
+---
+
+## 8. Standardized Emergency Forms Support (Winlink / ICS-213 Style)
+
+### Description and Use Case
+Enable filling, sending, receiving, and viewing standardized operational emergency forms (widely used in the Winlink Standard Forms ecosystem, ARES, RACES, and ADRASEC civil defense networks):
+- **ICS (Incident Command System) Forms**: ICS-213 (General Message), ICS-214 (Activity Log), ICS-205 (Radio Plan).
+- **Situation and Check-in Reports**: Station Check-in / Check-out, simplified weather report, Field Situation Report.
+
+The system relies on a bandwidth-frugal hybrid model:
+1. Form templates (HTML/JSON) pre-embedded in the station's web UI.
+2. Ultra-compact radio exchange: only the entered data (a few hundred bytes of JSON or CBOR) transits in the DTN bundle payload to a dedicated endpoint (e.g., `dtn://station/forms` or Chat/Files service).
+3. Faithful visual reconstruction upon reception matching the regulatory form layout, with clean print or PDF export options.
+
+### Expected Benefits
+- **Interoperability and operational adoption**: Rescue services and authorities use the ICS framework. Direct integration in `dtn-hdy-ham` positions the solution as a resilient store-and-forward alternative to Winlink.
+- **Optimal spectral frugality**: Unlike sending a PDF or screenshot, only useful fields are transmitted over HF/VHF links (a 50x to 100x reduction in transmission time).
+- **Validation and guidance**: Required field checks, GPS coordinates from the station, certified UTC timestamps.
+- **BPSec authentication**: Ability to cryptographically sign the form with the station's key (via the BPSec/BIB module already built into `dtn-hdy-ham`) to guarantee the integrity of mission orders and reports.
+
+### Technical Challenges and Drawbacks
+- **Data format (Winlink interop vs Native CBOR/JSON)**: Evaluate whether to parse/generate Winlink Express's standard XML dialect to build direct gateways, or adopt a lighter standardized JSON/CBOR format.
+- **Template catalog management**: Mechanism to update templates without recompiling the entire application (e.g., customizable templates folder).
+- **Degraded display**: If a station receives a form whose local template it does not possess, a generic "key / value" table fallback is required.
+
+### Evaluation Status
+> **High priority / Strategic**: Major evolution with high added value for emergency communications and the amateur radio community.
+
+---
+
+## 9. Formal Verification and Panic-Free Guarantees (`no-panic` & `cargo-kani`)
+
+### Description and Use Case
+In a Delay-Tolerant Network (DTN), and especially in emergency or isolated radio infrastructure contexts, a process crash (`panic!`) on an intermediate node or standalone station interrupts storage and forwarding for all in-transit bundles. Beyond static linting rules (`clippy::unwrap_used` and `clippy::panic`), the goal is to integrate mathematical and link-time verification tools proving the absolute absence of panics on critical execution paths:
+
+1. **Option A: `#[no_panic]` Link-Time Attribute (David Tolnay)**:
+   * Allows annotating critical low-level functions (packet parsers, network decoders, cryptographic functions).
+   * How it works: Relies on LLVM compiler optimizations in `--release` mode (dead code elimination). If the compiler cannot prove a panic path is unreachable, linking fails immediately with a missing symbol (`__no_panic`).
+   * *Ideal targets*: LTP segment parsing (`hardy-ltp`), SenML CBOR decoder (`senml/parser.rs`), CoAP/CBOR basket metadata deserialization (`dtnbasket`).
+
+2. **Option B: Bounded Model Checking with Kani (`cargo-kani`, AWS)**:
+   * Bit-precise formal verifier backed by SMT/SAT solvers (CBMC).
+   * How it works: Symbolically explores the infinite set of input byte combinations on a formal test harness to mathematically prove:
+     * Zero out-of-bounds dereferencing (`slice out-of-bounds` on frame indices).
+     * Zero arithmetic overflow (`integer overflow`).
+     * Zero implicit panics (`Option::unwrap()` or `Result::unwrap()`).
+   * *Ideal targets*: LTP reassembly finite state machine (`SessionFsm`), segment claim calculation, BPSec/BIB verification engine (`keystore.rs`).
+
+3. **Option C: Static Call-Graph Analysis (`cargo-call-stack` / Symbol Inspection)**:
+   * With `panic = "abort"` in the release profile, verifying that the call tree of compiled binaries (`dtn-hdy-ham`, CLAs) does not reference internal panic symbols `core::panicking::panic` or `rust_begin_unwind`.
+
+### Expected Benefits
+- **Absolute resilience on noisy radio links**: Corrupted or fuzzed frames received over RF can under no circumstances crash the daemon.
+- **Zero silent regressions**: Any added code that could panic is caught either at compile time (link-time) or by formal solvers in CI.
+- **Zero runtime overhead**: Unlike dynamic defensive guards (`catch_unwind`), these approaches rely on static elimination.
+
+### Technical Challenges and Drawbacks
+- **`#[no_panic]`**: Requires optimized builds (`--release`), because in debug mode without LLVM optimization, the compiler does not simplify index check branches.
+- **Kani**: SMT solvers require longer CI analysis times (tens of seconds per harness) and impose explicit *unwind bounds* on dynamic loops.
+
+### Evaluation Status
+> **Recommended**: Progressive integration starting with `#[no_panic]` on pure binary parsing functions in `hardy-ltp` and `senml`, then writing Kani harnesses for the LTP session FSM.
+
+---
+
+## 10. Configuration Override via Environment Variables (`DTN_HDY_HAM__*`)
+
+### Description and Use Case
+In accordance with Hardy's architecture guidelines (`hardy/docs/design.md` §7), allow dynamic overriding of any configuration key via environment variables prefixed with `DTN_HDY_HAM__` using a double underscore `__` separator for nested hierarchy (e.g., `DTN_HDY_HAM__CALLSIGN=F4XYZ`, `DTN_HDY_HAM__STORAGE__IN_MEMORY=true`, `DTN_HDY_HAM__WEB__ADDRESS="0.0.0.0:8088"`).
+
+### Expected Benefits
+- **Simplified containerized deployments (Docker, Podman, Kubernetes)**: Allows configuring a complete amateur radio DTN station via a `docker-compose.yml` file or system environment variables without injecting or mounting a configuration file volume.
+- **Systemd integration**: Enables using `EnvironmentFile=/etc/default/dtn-hdy-ham` in the systemd unit for infrastructure deployments.
+- **Consistency with the Hardy ecosystem**: Aligns `dtn-hdy-ham` with the standard behavior of `hardy-bpa-server` and `hardy-tcpclv4-server` binaries.
+
+### Technical Challenges and Drawbacks
+- Requires adding the `config::Environment::with_prefix("DTN_HDY_HAM").separator("__")` source in the `HamConfig::load` configuration builder.
+- Must preserve precedence: defaults < configuration file < environment variables < command-line arguments (CLI).
+
+### Evaluation Status
+> **High priority / Easy**: Very low implementation cost in `HamConfig::load`, immediate operational gain for containers and automated deployments.
+
+---
+
+## 11. File-Based CLA Integration (`hardy-file-cla` / Sneakernet)
+
+### Description and Use Case
+Integrate Hardy's official `hardy-file-cla` crate into `dtn-hdy-ham` to enable exchanging and relaying BPv7 bundles through filesystem directories (inbound `inbox` and outbound `outbox` folders), ideal for physical transport ("Sneakernet") on USB drives, SD cards, or synchronized shared folders (Syncthing, Nextcloud, rsync).
+
+### Expected Benefits
+- **Absolute resilience during total blackout**: Even without any available HF/VHF radio link or IP connectivity, two stations can exchange messages, emergency files, and telemetry by simply transferring a USB drive physically.
+- **Hybrid Air-Gap Gateway**: Enables an isolated station not connected to the Internet to transfer bundles to a gateway via removable media.
+- **Standardization**: Directly reuses the official `hardy-file-cla` component maintained in the Hardy tree.
+
+### Technical Challenges and Drawbacks
+- Directory watching (polling vs inotify/kqueue notifications).
+- File permissions handling on removable media (FAT32/exFAT filesystems without POSIX permissions).
+- Web UI integration (displaying the file CLA status and the count of dropped/read bundles).
+
+### Evaluation Status
+> **Recommended**: High relevance for civil defense exercises and emergency networks in disaster areas.
