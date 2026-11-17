@@ -84,6 +84,7 @@ jobs:
         with:
           repository: loic-fejoz/hqfbp-rs
           path: hqfbp-rs
+          ref: feat/remove-max-payload-size
       - name: Checkout dtnpm-core
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -235,6 +236,7 @@ jobs:
         with:
           repository: loic-fejoz/hqfbp-rs
           path: hqfbp-rs
+          ref: feat/remove-max-payload-size
       - name: Checkout dtnpm-core
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
