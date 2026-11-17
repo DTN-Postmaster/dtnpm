@@ -56,7 +56,7 @@ jobs:
           - name: linux-x86_64
             os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
-            use_zigbuild: true
+            use_zigbuild: false
             archive_ext: tar.gz
           - name: linux-aarch64
             os: ubuntu-latest
@@ -150,25 +150,54 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.local/protoc
-          key: protoc-29.3-linux-x86_64
-      - name: Install protoc (cache miss)
-        if: steps.protoc-cache.outputs.cache-hit != 'true'
+          key: protoc-29.3-${{ runner.os }}
+      - name: Install protoc (Unix cache miss)
+        if: steps.protoc-cache.outputs.cache-hit != 'true' && runner.os != 'Windows'
         run: |
-          curl -fsSL -o /tmp/protoc.zip "https://github.com/protocolbuffers/protobuf/releases/download/v29.3/protoc-29.3-linux-x86_64.zip"
+          if [ "${{ runner.os }}" = "macOS" ]; then
+            ASSET="protoc-29.3-osx-universal_binary.zip"
+          else
+            ASSET="protoc-29.3-linux-x86_64.zip"
+          fi
+          curl -fsSL -o /tmp/protoc.zip "https://github.com/protocolbuffers/protobuf/releases/download/v29.3/${ASSET}"
           mkdir -p "$HOME/.local/protoc"
           unzip -q /tmp/protoc.zip -d "$HOME/.local/protoc"
-      - name: Add protoc to PATH
+      - name: Install protoc (Windows cache miss)
+        if: steps.protoc-cache.outputs.cache-hit != 'true' && runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Invoke-WebRequest -Uri "https://github.com/protocolbuffers/protobuf/releases/download/v29.3/protoc-29.3-win64.zip" -OutFile "$env:TEMP\protoc.zip"
+          New-Item -ItemType Directory -Force -Path "$HOME/.local/protoc" | Out-Null
+          Expand-Archive -Path "$env:TEMP\protoc.zip" -DestinationPath "$HOME/.local/protoc" -Force
+      - name: Add protoc to PATH (Unix)
+        if: runner.os != 'Windows'
         run: echo "$HOME/.local/protoc/bin" >> "$GITHUB_PATH"
+      - name: Add protoc to PATH (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: Add-Content -Path $env:GITHUB_PATH -Value "$HOME\.local\protoc\bin"
 
-      - name: Install cargo-zigbuild
+      - name: Install cargo-zigbuild and zig
         if: matrix.use_zigbuild
-        uses: taiki-e/install-action@fa5c9474ee639e735adbd1fd9d0ae24a5309bcf0 # cargo-zigbuild
+        uses: taiki-e/install-action@ab49d3c64680143e184118bed66a46419fc15519 # v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tool: cargo-zigbuild
+      - name: Install zig (for cargo-zigbuild)
+        if: matrix.use_zigbuild
+        run: |
+          python3 -m pip install --user --break-system-packages ziglang
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           workspaces: dtn-postmaster/dtnpm
+
+      - name: Build binaries (Linux native)
+        if: matrix.name == 'linux-x86_64'
+        working-directory: dtn-postmaster/dtnpm
+        run: cargo build --release --target ${{ matrix.target }}
 
       - name: Build binaries (Linux zigbuild)
         if: matrix.use_zigbuild
