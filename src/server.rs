@@ -341,6 +341,28 @@ impl HamServer {
 
                     let mut targets = Vec::new();
                     for p in &mercury_cfg.peers {
+                        let peer_node: Option<hardy_bpv7::eid::NodeId> =
+                            match p.effective_node_id().parse() {
+                                Ok(nid) => Some(nid),
+                                Err(e) => {
+                                    warn!(
+                                        "Invalid peer node ID '{}' for peer '{}': {}",
+                                        p.effective_node_id(),
+                                        p.callsign,
+                                        e
+                                    );
+                                    None
+                                }
+                            };
+
+                        cla_manager
+                            .register_contact_peer(
+                                p.callsign.clone(),
+                                peer_node.clone(),
+                                cla.clone(),
+                            )
+                            .await;
+
                         if let Some(ref sched) = p.schedule {
                             let schedule = match sched {
                                 ScheduleConfig::Recurring { cron, duration } => {
@@ -376,18 +398,6 @@ impl HamServer {
                                         start: start_dt,
                                         end: end_dt,
                                     }
-                                }
-                            };
-                            let peer_node = match p.effective_node_id().parse() {
-                                Ok(nid) => Some(nid),
-                                Err(e) => {
-                                    warn!(
-                                        "Invalid peer node ID '{}' for peer '{}': {}",
-                                        p.effective_node_id(),
-                                        p.callsign,
-                                        e
-                                    );
-                                    None
                                 }
                             };
                             targets.push(ContactTarget {

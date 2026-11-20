@@ -320,3 +320,83 @@ async fn test_in_memory_bundle_inspector_and_connect_peer() {
     assert_eq!(list.len(), 1);
     assert_eq!(list[0]["destination"], "dtn://remote/inbox");
 }
+
+#[cfg(feature = "cla-mercury")]
+#[tokio::test]
+async fn test_mercury_arq_peer_registered_in_cla_manager_and_connect_endpoint() {
+    let mut config = HamConfig {
+        callsign: Some("F4JXQ-2".to_string()),
+        node_id: "dtn://f4jxq-2/".to_string(),
+        storage: dtnpm::config::StorageConfig {
+            in_memory: true,
+            ..Default::default()
+        },
+        grpc: dtnpm::config::GrpcConfig {
+            enabled: false,
+            ..Default::default()
+        },
+        web: Some(dtnpm::config::WebConfig {
+            address: "127.0.0.1:0".parse().unwrap(),
+            static_dir: std::path::PathBuf::from("../dtnpm-web-core/ui/dist"),
+        }),
+        ..Default::default()
+    };
+
+    config.clas.push(dtnpm::config::cla::ClaConfig {
+        name: "mercury-hf".to_string(),
+        cla_type: dtnpm::config::cla::ClaType::MercuryArq(
+            dtnpm::config::cla::MercuryArqHamConfig {
+                my_callsign: Some("F4JXQ-2".to_string()),
+                control_addr: "127.0.0.1:18300".parse().unwrap(),
+                data_addr: "127.0.0.1:18301".parse().unwrap(),
+                connect_timeout: Some(std::time::Duration::from_millis(200)),
+                peers: vec![dtnpm::config::cla::MercuryPeerHamConfig {
+                    callsign: "VA3NB".to_string(),
+                    node_id: None,
+                    schedule: None,
+                }],
+                ..Default::default()
+            },
+        ),
+        policy: None,
+        schedule: None,
+    });
+
+    let server = HamServer::new(config)
+        .await
+        .expect("HamServer should build with Mercury ARQ CLA");
+    server.bpa().start(false).await;
+
+    let statuses = server.cla_manager().list_peer_statuses().await;
+    assert!(
+        statuses.iter().any(|s| s.address == "VA3NB"),
+        "Mercury peer VA3NB should be registered in ClaManager, got: {statuses:?}"
+    );
+
+    let app = server
+        .create_web_router()
+        .await
+        .expect("web router should build");
+
+    let connect_res = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/clas/connect")
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"peer": "VA3NB"}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert!(connect_res.status().is_server_error());
+    let body = axum::body::to_bytes(connect_res.into_body(), 1024 * 64)
+        .await
+        .unwrap();
+    let body_str = String::from_utf8_lossy(&body);
+    assert!(
+        !body_str.contains("No configured"),
+        "POST /api/v1/clas/connect should dispatch VA3NB to MercuryCla, got: {body_str}"
+    );
+}
