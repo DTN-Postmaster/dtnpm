@@ -1,6 +1,6 @@
 [package]
 name = "dtnpm"
-version = "0.2.0"
+version = "0.3.0-rc.1"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 description = "DTN Postmaster (dtnpm): modular Hardy BPv7 bundle processing agent, convergence layers, web console and CLI utilities"

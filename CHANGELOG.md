@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0-rc.1] - 2026-11-20
+
 ### Added
 - **OPA/Rego Routing & Filtering (`dtnpm-mod-rego-routing`)**: Integrated Rego policy routing (`RegoRib`, `ObservedCla`, `RegoRoutingConfig`) into `desktop` and `webui-remote` profiles, with APRS path, hop limit, and Spray-and-Wait options in `dtnsend` and extension block display in `dtnprint`.
 - **IAM & Access Control**: Added local Argon2id operator accounts (`dtnpm user`), Bearer API tokens (`dtnpm token`), gRPC security gateway, Unix Domain Socket support, and reverse-proxy SSO configuration in `dtnpm init`.
