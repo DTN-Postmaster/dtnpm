@@ -154,7 +154,7 @@ node-id: "dtn://n0call/"
 
 # Storage settings (bundle storage directory & embedded SQLite database)
 storage:
-  data-dir: "~/.local/share/dtn-hdy-ham"
+  data-dir: "~/.local/share/dtnpm"
   in-memory: false
 
 # Local gRPC endpoint for CLI tools (dtnsend, dtnprint, dtnping, etc.)

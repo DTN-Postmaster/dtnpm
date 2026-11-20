@@ -1,6 +1,6 @@
-# Quickstart Guide — `dtn-hdy-ham`
+# Quickstart Guide — `dtnpm` (DTN Postmaster)
 
-Welcome to **dtn-hdy-ham**, the Delay-Tolerant Networking (DTN) BPv7 Bundle Processing Agent tailored for amateur radio operators and field communication.
+Welcome to **DTN Postmaster** (`dtnpm`), the Delay-Tolerant Networking (DTN) BPv7 Bundle Processing Agent tailored for amateur radio operators and field communication.
 
 This release package contains static, self-contained binaries that require no external runtime dependencies.
 
@@ -9,7 +9,7 @@ This release package contains static, self-contained binaries that require no ex
 ## 1. Package Contents
 
 - `bin/`:
-  - `dtn-hdy-ham`: Main DTN BPv7 node, Web UI server, and convergence layer engine.
+  - `dtnpm`: Main DTN BPv7 node, Web UI server, and convergence layer engine.
   - `dtnsend`: Command-line bundle sending utility.
   - `dtnprint`: Command-line bundle receiving / logging utility.
   - `dtnfiles`: Command-line file distribution and retrieval tool.
@@ -17,7 +17,7 @@ This release package contains static, self-contained binaries that require no ex
 - `web/dist/`: Precompiled static web assets for the web dashboard.
 - `config.example.toml`: Documented configuration template (TOML format).
 - `config.example.yaml`: Documented configuration template (YAML format).
-- `dtn-hdy-ham.service`: Systemd service unit template for Linux systems.
+- `dtnpm.service`: Systemd service unit template for Linux systems.
 
 ---
 
@@ -26,7 +26,7 @@ This release package contains static, self-contained binaries that require no ex
 ### Step 2.1 — Configuration
 You can either run the interactive setup wizard:
 ```bash
-./bin/dtn-hdy-ham init
+./bin/dtnpm init
 ```
 Or copy the reference configuration and customize your callsign:
 ```bash
@@ -36,7 +36,7 @@ cp config.example.toml config.toml
 
 ### Step 2.2 — Start the Node
 ```bash
-./bin/dtn-hdy-ham -c config.toml
+./bin/dtnpm -c config.toml
 ```
 
 ### Step 2.3 — Open the Web Dashboard
@@ -53,7 +53,7 @@ From the Web Dashboard, you can:
 
 ## 3. Using the Bundled CLI Tools
 
-All bundled CLI tools connect automatically to the local `dtn-hdy-ham` gRPC interface (port 50051).
+All bundled CLI tools connect automatically to the local `dtnpm` gRPC interface (port 50051).
 
 ### Send a Text Message or File (`dtnsend`)
 ```bash
@@ -89,28 +89,28 @@ All bundled CLI tools connect automatically to the local `dtn-hdy-ham` gRPC inte
 
 ## 4. Running as a Background Systemd Service (Linux)
 
-To run `dtn-hdy-ham` continuously on Linux (e.g. Raspberry Pi or server):
+To run `dtnpm` continuously on Linux (e.g. Raspberry Pi or server):
 
-1. Copy the binaries to your path (or keep them in `/opt/dtn-hdy-ham/bin`):
+1. Copy the binaries to your path (or keep them in `/opt/dtnpm/bin`):
    ```bash
    sudo cp bin/* /usr/local/bin/
    ```
 
 2. Copy and customize configuration:
    ```bash
-   sudo mkdir -p /etc/dtn-hdy-ham
-   sudo cp config.example.toml /etc/dtn-hdy-ham/config.toml
-   sudo nano /etc/dtn-hdy-ham/config.toml
+   sudo mkdir -p /etc/dtnpm
+   sudo cp config.example.toml /etc/dtnpm/config.toml
+   sudo nano /etc/dtnpm/config.toml
    ```
 
 3. Install the systemd unit:
    ```bash
-   sudo cp dtn-hdy-ham.service /etc/systemd/system/
+   sudo cp dtnpm.service /etc/systemd/system/
    sudo systemctl daemon-reload
-   sudo systemctl enable --now dtn-hdy-ham
+   sudo systemctl enable --now dtnpm
    ```
 
 4. View logs:
    ```bash
-   journalctl -u dtn-hdy-ham -f
+   journalctl -u dtnpm -f
    ```
