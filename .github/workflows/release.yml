@@ -231,11 +231,12 @@ jobs:
         working-directory: dtn-postmaster/dtnpm
         run: |
           PKG_DIR="dtnpm-${{ matrix.name }}"
-          mkdir -p "$PKG_DIR/web"
+          mkdir -p "$PKG_DIR/web" "$PKG_DIR/docs"
           for bin in dtnpm dtnbib dtnfiles dtnforward dtnping dtnprint dtnquery dtnsend dtntrigger hdy-stats; do
             cp "target/${{ matrix.target }}/release/$bin" "$PKG_DIR/"
           done
-          cp config.example.yaml config.example.toml dtnpm.service dtn-hdy-ham.service README.md LICENSE.md SECURITY.md "$PKG_DIR/"
+          cp config.example.yaml config.example.toml dtnpm.service dtn-hdy-ham.service README.md CHANGELOG.md LICENSE.md SECURITY.md "$PKG_DIR/"
+          cp docs/cla-mercury-arq.md docs/cla-mercury-broadcast-ltp-kiss.md "$PKG_DIR/docs/"
           cp -r examples "$PKG_DIR/"
           cp -r web/dist "$PKG_DIR/web/"
           tar czf "${PKG_DIR}.tar.gz" "$PKG_DIR"
@@ -246,11 +247,12 @@ jobs:
         shell: pwsh
         run: |
           $pkgDir = "dtnpm-${{ matrix.name }}"
-          New-Item -ItemType Directory -Force -Path $pkgDir | Out-Null
+          New-Item -ItemType Directory -Force -Path $pkgDir, "$pkgDir/docs" | Out-Null
           foreach ($bin in @("dtnpm.exe", "dtnbib.exe", "dtnfiles.exe", "dtnforward.exe", "dtnping.exe", "dtnprint.exe", "dtnquery.exe", "dtnsend.exe", "dtntrigger.exe", "hdy-stats.exe")) {
             Copy-Item "target/${{ matrix.target }}/release/$bin" "$pkgDir/"
           }
-          Copy-Item config.example.yaml, config.example.toml, README.md, LICENSE.md, SECURITY.md "$pkgDir/"
+          Copy-Item config.example.yaml, config.example.toml, README.md, CHANGELOG.md, LICENSE.md, SECURITY.md "$pkgDir/"
+          Copy-Item docs/cla-mercury-arq.md, docs/cla-mercury-broadcast-ltp-kiss.md "$pkgDir/docs/"
           Copy-Item -Recurse examples "$pkgDir/examples"
           Copy-Item -Recurse web "$pkgDir/web"
           Compress-Archive -Path $pkgDir -DestinationPath "${pkgDir}.zip" -Force

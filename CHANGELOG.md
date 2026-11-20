@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- **OPA/Rego Routing & Filtering (`dtnpm-mod-rego-routing`)**: Integrated Rego policy routing (`RegoRib`, `ObservedCla`, `RegoRoutingConfig`) into `desktop` and `webui-remote` profiles, with APRS path, hop limit, and Spray-and-Wait options in `dtnsend` and extension block display in `dtnprint`.
+- **IAM & Access Control**: Added local Argon2id operator accounts (`dtnpm user`), Bearer API tokens (`dtnpm token`), gRPC security gateway, Unix Domain Socket support, and reverse-proxy SSO configuration in `dtnpm init`.
+- **CLA Operations Guides**: Added step-by-step setup and operations guides for Mercury Connected ARQ (`docs/cla-mercury-arq.md`) and LTP over Mercury Broadcast KISS (`docs/cla-mercury-broadcast-ltp-kiss.md`), plus updated WebUI screenshots in `README.md`.
+
+### Changed
+- **Rebranded to DTN Postmaster (`dtnpm`)**: Updated WebUI, CLI wizard, example configurations, `QUICKSTART.md`, and screenshots from `DTN HdyHam` / `dtn-hdy-ham` to **DTN Postmaster** / `dtnpm`.
+- **Default Config & Data Paths**: Updated default user configuration path to `~/.config/dtnpm/` (`config.yaml` / `config.toml`), system path to `/etc/dtnpm/`, and default storage directory to `~/.local/share/dtnpm`.
+- **Cargo Feature Profiles**: Renamed the default `emcom` feature profile to `desktop`.
+- **Release Packaging**: Bundled `web/dist`, `CHANGELOG.md`, and `docs/cla-mercury-*.md` into `.tar.gz` and `.zip` release archives.
+
+### Security
+- **CRA & OWASP Hardening (ADR-0022)**: Enforced gRPC registration gate, hardened CLI tools and `dtnpm.service` (`User=dtnpm`, `ProtectSystem=strict`, `ProtectHome=true`, `NoNewPrivileges=true`), and integrated CI/release security checks (`gitleaks`, `cargo-audit`, `cargo-deny`, CycloneDX SBOM).
+
 ## [0.2.0] - 2026-11-08
 
 ### Added
