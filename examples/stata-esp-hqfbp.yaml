@@ -1,0 +1,29 @@
+# Station A (STATA) using HQFBP over ESP-NOW KISS TCP (Station A KISS port 18001, 250-byte MTU)
+node-id: "dtn://stata.ampr.org/"
+callsign: "STATA"
+
+storage:
+  data-dir: "/tmp/dtn-stata"
+
+grpc:
+  enabled: true
+  address: "127.0.0.1:3050"
+
+web:
+  address: "127.0.0.1:8081"
+
+clas:
+  - name: "hqfbp-esp-a"
+    type: "hqfbp"
+    callsign: "STATA"
+    transport:
+      type: "kiss-tcp"
+      server-addr: "127.0.0.1:18001"
+      port: 0
+      rate-limit-bytes-per-sec: 4000
+      burst-capacity-bytes: 512
+    hailing-encodings: "h"
+    default-bundle-encodings: "gzip, crc32, rq(dlen, 140, 2), h"
+    peers:
+      - callsign: "STATB"
+        node-id: "dtn://statb.ampr.org/"

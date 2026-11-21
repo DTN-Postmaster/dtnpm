@@ -1,0 +1,29 @@
+# Station B (STATB) using HQFBP over ESP-NOW KISS TCP (Station B KISS port 18011, 250-byte MTU)
+node-id: "dtn://statb.ampr.org/"
+callsign: "STATB"
+
+storage:
+  data-dir: "/tmp/dtn-statb"
+
+grpc:
+  enabled: true
+  address: "127.0.0.1:3051"
+
+web:
+  address: "127.0.0.1:8082"
+
+clas:
+  - name: "hqfbp-esp-b"
+    type: "hqfbp"
+    callsign: "STATB"
+    transport:
+      type: "kiss-tcp"
+      server-addr: "127.0.0.1:18011"
+      port: 0
+      rate-limit-bytes-per-sec: 4000
+      burst-capacity-bytes: 512
+    hailing-encodings: "h"
+    default-bundle-encodings: "gzip, crc32, rq(dlen, 140, 2), h"
+    peers:
+      - callsign: "STATA"
+        node-id: "dtn://stata.ampr.org/"

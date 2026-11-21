@@ -1,0 +1,34 @@
+# Station A (STATA) using LTP over ESP-NOW KISS TCP (Station A KISS port 18001, 250-byte MTU)
+node-id: "dtn://stata.ampr.org/"
+callsign: "STATA"
+
+storage:
+  data-dir: "/tmp/dtn-stata"
+
+grpc:
+  enabled: true
+  address: "127.0.0.1:3050"
+
+web:
+  address: "127.0.0.1:8081"
+
+clas:
+  - name: "ltp-esp-a"
+    type: "ltp"
+    engine-id: 1
+    max-segment-payload-len: 200
+    rtt: "2s"
+    ack-margin: "1s"
+    transport:
+      type: "kiss-tcp"
+      server-addr: "127.0.0.1:18001"
+      port: 0
+      min-frame-len: 15
+      half-duplex: true
+      turnaround-mode: "wait-for-report"
+      turnaround-timeout: "3s"
+      rate-limit-bytes-per-sec: 1200
+      burst-capacity-bytes: 1024
+    peers:
+      - engine-id: 2
+        node-id: "dtn://statb.ampr.org/"
