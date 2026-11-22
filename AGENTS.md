@@ -5,9 +5,17 @@ Provide the standalone `dtnpm` BPA daemon, the interactive configuration assista
 
 ---
 
-## 📝 Documentation Language
+## 📝 Documentation & User Interface Language
 
-- **English must be used as the language for all documentation**, unless the file is suffixed with `.fr.md` or another language is explicitly requested in the prompt.
+- **English by Default (Docs & UI)**:
+  - **Documentation**: English must be used for all documentation, unless the file is suffixed with `.fr.md` or another language is explicitly requested in the prompt.
+  - **User Interface (100% English)**: Every user-facing string in the WebUI (`dtnpm-web-core`, `dtnpm-mod-*`, `template-dtnpm-mod`) and CLI/error messages MUST be written in English — including navigation tabs, headings, form labels, placeholders, buttons, badges, `title` tooltips, `aria-label` attributes, status banners, `alert()`/`confirm()` prompts, and Playwright E2E test assertions. Never leave or introduce French or mixed-language copy in UI components or templates.
+
+## 🧭 WebUI Navigation & Sub-Tab Architecture
+
+- **Global Navbar (`dtnpm-web-core/ui/src/components/Navbar.tsx`)**: Reserved strictly for top-level operational workflows (`NavTabId`: `'station' | 'chat' | 'files' | 'senml' | 'send'` — `Station`, `Chat`, `Files`, `SenML`, `Send Bundle`). Do **not** promote administrative, routing, filtering, security, storage, or diagnostic screens to the global navbar.
+- **Station Sub-Tabs (`dtnpm-web-core/ui/src/components/ConfigView.tsx`)**: Station administration and routing/policy panels MUST live as sub-tabs under **Station** (`StationSubTab`) in the exact order: `Links & Radio` (`radio`) → `Routing (RIB)` (`routes`) → `Rego Routing` (`rego_routing`) → `BPSec Security` (`security`) → `Storage & Bundles` (`bundles`) → `Logs & Diagnostics` (`logs`) → `JSON Config` (`advanced`). Module-backed sub-tabs (such as `rego_routing`) must be capability-gated via `enabledModules` (`/api/capabilities`).
+- **Shared Component Parity**: Keep shared UI components (`SecurityBadge.tsx`, `utils/markdown.ts`, API types) synchronized across `dtnpm-web-core/ui`, `dtnpm-mod-*/ui`, and `template-dtnpm-mod/ui`.
 
 ---
 
@@ -69,6 +77,9 @@ Before ANY task finalization or commit proposal, you must run:
   - `cargo check --offline --no-default-features --features "amsat"`
   - `cargo check --offline --no-default-features --features "node-headless"`
   - `cargo check --offline --no-default-features --features "webui-remote"`
+- **WebUI Build & E2E Tests** (when modifying WebUI components or UI modules):
+  - `pnpm build` and `pnpm test:e2e` inside `../dtnpm-web-core/ui` (and `pnpm test:e2e` in modified `../dtnpm-mod-*/ui` directories with Playwright suites)
+  - Verify zero non-English UI strings remain across touched `.ts`/`.tsx`/`.html` files and Playwright assertions
 - **Full Security Audit**: `./scripts/check-security.sh --strict`
 - **Code Coverage**: `./scripts/check-coverage.sh --summary-only`
 - **Install Local Git Hooks**: `./scripts/install-hooks.sh`
@@ -85,6 +96,7 @@ Before ANY task finalization or commit proposal, you must run:
 - `../dtnpm-cla-mercury-arq`: Mercury ARQ connected HF radio convergence layer.
 - `../dtnpm-mod-chat`: BPSec-secured DTN instant messaging WebUI application module.
 - `../dtnpm-mod-files`: DTN file sharing and transfer WebUI application module with quota controls.
+- `../dtnpm-mod-rego-routing`: OPA/Rego bundle filtering and dynamic routing WebUI module (Station sub-tab).
 - `../dtnpm-mod-senml`: SenML (RFC 8428) telemetry collection and visualization WebUI application module.
 - `../dtnpm-app-basket`: Daemon (`dtnbasket`) and CLI (`dtnbasket-cli`) for the DTN Basket protocol with SSRF mitigation.
 - `adr/`: Architecture Decision Records registry (ADRs).
