@@ -165,6 +165,9 @@ impl HamServer {
                 dtnpm_mod_rego_routing::RegoRoutingModule::with_config(rego_cfg)
                     .context("Failed to initialize RegoRoutingModule")?,
             );
+            module
+                .attach_storage(internal_storage.connection())
+                .context("Failed to attach SQLite storage to RegoRoutingModule")?;
             builder =
                 builder.routing_agent("rego_routing".to_string(), module.routing_agent().clone());
             let engine_for_rib = module.engine().clone();
