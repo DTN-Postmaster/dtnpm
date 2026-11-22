@@ -8,10 +8,8 @@ no-default-features = false
 [advisories]
 ignore = [
     # Unmaintained transitive crates with no safe upgrade available yet (via regorus / dtnpm-core):
-    "RUSTSEC-2026-0542", # humantime
     "RUSTSEC-2026-0543", # chrono
     "RUSTSEC-2026-0555", # chrono-tz
-    { id = "RUSTSEC-2026-0459", reason = "VEX not_affected: SQLite session extension is neither compiled nor invoked by dtnpm" },
 ]
 
 [licenses]
