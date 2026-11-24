@@ -18,64 +18,64 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Hardy DTN workspace
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: loic-fejoz/hardy
           path: hardy
           ref: main-dtnpm
       - name: Checkout hqfbp-rs
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: loic-fejoz/hqfbp-rs
           path: hqfbp-rs
           ref: feat/remove-max-payload-size
       - name: Checkout dtnpm-core
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: dtn-postmaster/dtnpm-core
           path: dtn-postmaster/dtnpm-core
       - name: Checkout dtnpm-web-core
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: dtn-postmaster/dtnpm-web-core
           path: dtn-postmaster/dtnpm-web-core
       - name: Checkout dtnpm-cla-ltp-kiss
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: dtn-postmaster/dtnpm-cla-ltp-kiss
           path: dtn-postmaster/dtnpm-cla-ltp-kiss
       - name: Checkout dtnpm-cla-hqfbp-kiss
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: dtn-postmaster/dtnpm-cla-hqfbp-kiss
           path: dtn-postmaster/dtnpm-cla-hqfbp-kiss
       - name: Checkout dtnpm-cla-mercury-arq
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: dtn-postmaster/dtnpm-cla-mercury-arq
           path: dtn-postmaster/dtnpm-cla-mercury-arq
       - name: Checkout dtnpm-mod-chat
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: dtn-postmaster/dtnpm-mod-chat
           path: dtn-postmaster/dtnpm-mod-chat
       - name: Checkout dtnpm-mod-files
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: dtn-postmaster/dtnpm-mod-files
           path: dtn-postmaster/dtnpm-mod-files
       - name: Checkout dtnpm-mod-senml
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: dtn-postmaster/dtnpm-mod-senml
           path: dtn-postmaster/dtnpm-mod-senml
       - name: Checkout dtnpm-mod-rego-routing
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: dtn-postmaster/dtnpm-mod-rego-routing
           path: dtn-postmaster/dtnpm-mod-rego-routing
       - name: Checkout dtnpm
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           path: dtn-postmaster/dtnpm
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
@@ -83,7 +83,7 @@ jobs:
           components: rustfmt, clippy
       - name: Cache protoc
         id: protoc-cache
-        uses: actions/cache@v4
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.local/protoc
           key: protoc-29.3-linux-x86_64
@@ -117,13 +117,13 @@ jobs:
           cargo check --no-default-features --features "desktop,instrument"
           cargo check --no-default-features --features "webui-remote,cli"
       - name: Generate CycloneDX / SPDX SBOM (Syft)
-        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0
+        uses: anchore/sbom-action@dfcb83b97731532d72be422cbc51ee64adb6fd56 # v0.24.4
         with:
           path: dtn-postmaster/dtnpm
           output-file: dtn-postmaster/dtnpm/sbom.json
           format: cyclonedx-json
       - name: Upload SBOM artifact
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: sbom-dtnpm
           path: dtn-postmaster/dtnpm/sbom.json
@@ -133,64 +133,64 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Hardy DTN workspace
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: loic-fejoz/hardy
           path: hardy
           ref: main-dtnpm
       - name: Checkout hqfbp-rs
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: loic-fejoz/hqfbp-rs
           path: hqfbp-rs
           ref: feat/remove-max-payload-size
       - name: Checkout dtnpm-core
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: dtn-postmaster/dtnpm-core
           path: dtn-postmaster/dtnpm-core
       - name: Checkout dtnpm-web-core
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: dtn-postmaster/dtnpm-web-core
           path: dtn-postmaster/dtnpm-web-core
       - name: Checkout dtnpm-cla-ltp-kiss
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: dtn-postmaster/dtnpm-cla-ltp-kiss
           path: dtn-postmaster/dtnpm-cla-ltp-kiss
       - name: Checkout dtnpm-cla-hqfbp-kiss
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: dtn-postmaster/dtnpm-cla-hqfbp-kiss
           path: dtn-postmaster/dtnpm-cla-hqfbp-kiss
       - name: Checkout dtnpm-cla-mercury-arq
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: dtn-postmaster/dtnpm-cla-mercury-arq
           path: dtn-postmaster/dtnpm-cla-mercury-arq
       - name: Checkout dtnpm-mod-chat
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: dtn-postmaster/dtnpm-mod-chat
           path: dtn-postmaster/dtnpm-mod-chat
       - name: Checkout dtnpm-mod-files
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: dtn-postmaster/dtnpm-mod-files
           path: dtn-postmaster/dtnpm-mod-files
       - name: Checkout dtnpm-mod-senml
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: dtn-postmaster/dtnpm-mod-senml
           path: dtn-postmaster/dtnpm-mod-senml
       - name: Checkout dtnpm-mod-rego-routing
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: dtn-postmaster/dtnpm-mod-rego-routing
           path: dtn-postmaster/dtnpm-mod-rego-routing
       - name: Checkout dtnpm
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           path: dtn-postmaster/dtnpm
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
@@ -198,7 +198,7 @@ jobs:
           components: rustfmt, clippy
       - name: Cache protoc
         id: protoc-cache
-        uses: actions/cache@v4
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.local/protoc
           key: protoc-29.3-linux-x86_64
@@ -220,7 +220,7 @@ jobs:
           tool: cargo-audit, cargo-deny
       - name: Cache gitleaks
         id: gitleaks-cache
-        uses: actions/cache@v4
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.local/gitleaks
           key: gitleaks-8.30.1-linux-x64
@@ -241,70 +241,70 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Hardy DTN workspace
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: loic-fejoz/hardy
           path: hardy
           ref: main-dtnpm
       - name: Checkout hqfbp-rs
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: loic-fejoz/hqfbp-rs
           path: hqfbp-rs
           ref: feat/remove-max-payload-size
       - name: Checkout dtnpm-core
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: dtn-postmaster/dtnpm-core
           path: dtn-postmaster/dtnpm-core
       - name: Checkout dtnpm-web-core
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: dtn-postmaster/dtnpm-web-core
           path: dtn-postmaster/dtnpm-web-core
       - name: Checkout dtnpm-cla-ltp-kiss
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: dtn-postmaster/dtnpm-cla-ltp-kiss
           path: dtn-postmaster/dtnpm-cla-ltp-kiss
       - name: Checkout dtnpm-cla-hqfbp-kiss
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: dtn-postmaster/dtnpm-cla-hqfbp-kiss
           path: dtn-postmaster/dtnpm-cla-hqfbp-kiss
       - name: Checkout dtnpm-cla-mercury-arq
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: dtn-postmaster/dtnpm-cla-mercury-arq
           path: dtn-postmaster/dtnpm-cla-mercury-arq
       - name: Checkout dtnpm-mod-chat
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: dtn-postmaster/dtnpm-mod-chat
           path: dtn-postmaster/dtnpm-mod-chat
       - name: Checkout dtnpm-mod-files
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: dtn-postmaster/dtnpm-mod-files
           path: dtn-postmaster/dtnpm-mod-files
       - name: Checkout dtnpm-mod-senml
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: dtn-postmaster/dtnpm-mod-senml
           path: dtn-postmaster/dtnpm-mod-senml
       - name: Checkout dtnpm-mod-rego-routing
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: dtn-postmaster/dtnpm-mod-rego-routing
           path: dtn-postmaster/dtnpm-mod-rego-routing
       - name: Checkout dtnpm
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           path: dtn-postmaster/dtnpm
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
       - name: Cache protoc
         id: protoc-cache
-        uses: actions/cache@v4
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.local/protoc
           key: protoc-29.3-linux-x86_64
@@ -326,7 +326,7 @@ jobs:
         working-directory: dtn-postmaster/dtnpm
         run: ./scripts/check-coverage.sh --lcov
       - name: Upload coverage artifact
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: coverage-dtnpm
           path: dtn-postmaster/dtnpm/lcov.info
