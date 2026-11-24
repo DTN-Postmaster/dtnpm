@@ -29,6 +29,7 @@ async fn test_ham_server_in_memory_startup() {
         }),
         policy: None,
         schedule: None,
+        aliases: Vec::new(),
     });
 
     // 2. Add LTP CLA with UDP transport via generic ClaType::Other
@@ -46,6 +47,7 @@ async fn test_ham_server_in_memory_startup() {
         },
         policy: None,
         schedule: None,
+        aliases: Vec::new(),
     });
 
     // 3. Add HQFBP CLA with UDP transport via generic ClaType::Other
@@ -63,6 +65,7 @@ async fn test_ham_server_in_memory_startup() {
         },
         policy: None,
         schedule: None,
+        aliases: Vec::new(),
     });
 
     let server = HamServer::new(config)

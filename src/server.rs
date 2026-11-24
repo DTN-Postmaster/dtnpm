@@ -151,7 +151,7 @@ impl HamServer {
         #[cfg(feature = "mod-rego-routing")]
         let rego_module = {
             let rego_yaml = config.rego_routing.as_ref();
-            let rego_cfg = dtnpm_mod_rego_routing::RegoRoutingConfig {
+            let mut rego_cfg = dtnpm_mod_rego_routing::RegoRoutingConfig {
                 local_eid: config.node_id.clone(),
                 node_eids: endpoints.iter().map(ToString::to_string).collect(),
                 callsign: config.callsign.clone(),
@@ -159,8 +159,17 @@ impl HamServer {
                 custom_ingress_rego: rego_yaml.and_then(|r| r.custom_ingress_rego.clone()),
                 custom_egress_rego: rego_yaml.and_then(|r| r.custom_egress_rego.clone()),
                 custom_routing_rego: rego_yaml.and_then(|r| r.custom_routing_rego.clone()),
+                record_treb: rego_yaml.and_then(|r| r.record_treb).unwrap_or(false),
                 ..Default::default()
             };
+            if let Some(yaml) = rego_yaml {
+                if !yaml.supported_aliases.is_empty() {
+                    rego_cfg.supported_aliases = yaml.supported_aliases.clone();
+                }
+                if !yaml.trapped_aliases.is_empty() {
+                    rego_cfg.trapped_aliases = yaml.trapped_aliases.clone();
+                }
+            }
             let module = Arc::new(
                 dtnpm_mod_rego_routing::RegoRoutingModule::with_config(rego_cfg)
                     .context("Failed to initialize RegoRoutingModule")?,
@@ -184,6 +193,7 @@ impl HamServer {
         let mut tcp_peers = Vec::new();
         let mut coordinators = Vec::new();
         for cla_config in config.clas.clone() {
+            let cla_aliases = cla_config.effective_aliases();
             let (cla, init, cla_type_name): (Arc<dyn Cla>, ClaInit, &'static str) = match cla_config
                 .cla_type
             {
@@ -430,6 +440,7 @@ impl HamServer {
                     continue;
                 }
 
+                #[allow(clippy::match_single_binding)]
                 ClaType::Other { ref cla_type, .. } => match cla_type.as_str() {
                     #[cfg(feature = "cla-ltp")]
                     "ltp" => {
@@ -471,9 +482,10 @@ impl HamServer {
             };
 
             #[cfg(feature = "mod-rego-routing")]
-            let cla: Arc<dyn Cla> = dtnpm_core::cla_observer::ObservedCla::wrap(
+            let cla: Arc<dyn Cla> = dtnpm_core::cla_observer::ObservedCla::wrap_with_aliases(
                 cla_config.name.clone(),
                 cla_type_name,
+                cla_aliases,
                 cla,
                 rego_module.engine().clone(),
             );

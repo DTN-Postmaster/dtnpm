@@ -253,6 +253,7 @@ async fn test_in_memory_bundle_inspector_and_connect_peer() {
         }),
         policy: None,
         schedule: None,
+        aliases: Vec::new(),
     });
 
     let server = HamServer::new(config.clone())
@@ -360,6 +361,7 @@ async fn test_mercury_arq_peer_registered_in_cla_manager_and_connect_endpoint() 
         ),
         policy: None,
         schedule: None,
+        aliases: Vec::new(),
     });
 
     let server = HamServer::new(config)

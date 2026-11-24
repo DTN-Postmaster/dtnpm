@@ -56,6 +56,7 @@ fn make_node_config(
             }),
             policy: None,
             schedule: None,
+            aliases: Vec::new(),
         }],
         routes: vec![],
         rego_routing: custom_routing_rego.map(|rego| RegoRoutingYamlConfig {
