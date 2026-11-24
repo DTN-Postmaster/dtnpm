@@ -57,6 +57,8 @@ amsat = ["node", "web-core", "cla-ltp", "cla-hqfbp", "mod-senml"]
 node-headless = ["node", "cla-ltp", "cla-hqfbp", "cla-mercury"]
 # 4. Remote operator WebUI connecting over gRPC to a headless node
 webui-remote = ["web-core", "mod-chat", "mod-files", "mod-senml", "mod-rego-routing"]
+# 5. Minimal station profile (BPA + TCPCLv4 + CLI utilities + Rego routing/WebUI)
+minimal = ["node", "cli", "mod-rego-routing"]
 
 instrument = [
     "dtnpm-core/instrument",

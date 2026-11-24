@@ -53,4 +53,5 @@ Before finalizing a task or creating a commit, you must run:
    - `cargo check --offline --no-default-features --features "amsat"`
    - `cargo check --offline --no-default-features --features "node-headless"`
    - `cargo check --offline --no-default-features --features "webui-remote"`
+   - `cargo check --offline --no-default-features --features "minimal"`
 5. Security audit: `./scripts/check-security.sh --strict`

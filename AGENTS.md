@@ -77,6 +77,7 @@ Before ANY task finalization or commit proposal, you must run:
   - `cargo check --offline --no-default-features --features "amsat"`
   - `cargo check --offline --no-default-features --features "node-headless"`
   - `cargo check --offline --no-default-features --features "webui-remote"`
+  - `cargo check --offline --no-default-features --features "minimal"`
 - **WebUI Build & E2E Tests** (when modifying WebUI components or UI modules):
   - `pnpm build` and `pnpm test:e2e` inside `../dtnpm-web-core/ui` (and `pnpm test:e2e` in modified `../dtnpm-mod-*/ui` directories with Playwright suites)
   - Verify zero non-English UI strings remain across touched `.ts`/`.tsx`/`.html` files and Playwright assertions

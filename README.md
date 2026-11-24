@@ -37,6 +37,7 @@ Modular assembly repository for **DTN Postmaster** (`dtnpm`), combining [`dtnpm-
 | `amsat` | Satellite / AMSAT station: `node`, `web-core`, `cla-ltp`, `cla-hqfbp`, `mod-senml` |
 | `node-headless` | Headless RF/TCPCL router node with gRPC: `node`, `cla-ltp`, `cla-hqfbp`, `cla-mercury` |
 | `webui-remote` | Remote operator console over gRPC: `web-core`, `mod-chat`, `mod-files`, `mod-senml` |
+| `minimal` | Minimal station with BPA, CLI utilities, and Rego routing/WebUI: `node`, `cli`, `mod-rego-routing` |
 | `cli` *(default)* | Enables `dtnpm` CLI entrypoint and the 11 utility binaries |
 | `instrument` | Enables tracing spans (`tracing/attributes`, `hardy-bpa/instrument`) |
 
@@ -59,6 +60,7 @@ cargo test --all-targets
 cargo check --no-default-features --features amsat
 cargo check --no-default-features --features node-headless
 cargo check --no-default-features --features webui-remote
+cargo check --no-default-features --features minimal
 cargo check --no-default-features --features "desktop,instrument"
 cargo check --no-default-features --features "webui-remote,cli"
 ```
