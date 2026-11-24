@@ -69,7 +69,7 @@ struct Args {
     #[clap(long, env = "DTN_HDY_SOCKET")]
     socket: Option<String>,
 
-    /// Comma-separated APRS-like future path (e.g. 'WIDE1-1,WIDE2-2' or 'dtn://relay1/,WIDE2-2')
+    /// Comma-separated APRS New n-N future path (e.g. 'VHF2-2,TCPCL1-1' or 'F4JXQ-9,ARES2-2,QO100-1-1')
     #[clap(long = "aprs-path")]
     aprs_path: Option<String>,
 

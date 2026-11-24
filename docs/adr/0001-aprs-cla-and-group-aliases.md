@@ -50,9 +50,12 @@ APRS trajectory aliases in Block Type 200 (`ScopedAlias`) represent **transport 
   - `ltp` → `LTP`
   - `hqfbp` → `HQFBP`
   - `mercury-arq` / `mercury` → `MERCURY`
-- **Hop-count decrement (`ALIAS-N`):** `parse_aprs_path` and `ingress.rego` retain `ALIAS-N` hop-count decrement (case-insensitive matching, e.g. `VHF-2`, `10m-1`, `QO100-1`). Legacy `WIDE1`/`WIDE2` are removed from `RegoRoutingConfig::default()` (`supported_aliases = []`, `trapped_aliases = []`) and are not matched unless explicitly configured.
+- **Hop-count decrement (`New n-N Paradigm` only):** `parse_aprs_path` and `ingress.rego` strictly enforce the APRS **New n-N Paradigm** (`1 <= N <= n <= 7`):
+  - Standard form `<SCOPE><n>-<N>` (e.g., `VHF2-2`, `10M2-1`, `TCPCL1-1`, `ARES2-2`, `WIDE1-1`).
+  - Hyphenated form `<SCOPE>-<n>-<N>` for digit-ending aliases (e.g., `QO100-1-1`, `2G4-2-2`).
+  - Legacy `WIDE1`/`WIDE2` are removed from `RegoRoutingConfig::default()` (`supported_aliases = []`, `trapped_aliases = []`) and are not matched unless explicitly configured.
 - **Strict CLA constraint:** When `aprs_active_alias` is active, `RegoRib::decide` only forwards to connected peers whose `cla_aliases` contains that alias (passing `peer_id` so multi-CLA peers use the matching CLA). If no matching CLA peer is connected, the bundle parks in `WAIT` rather than leaking onto another CLA.
-- **Strict hop syntax note:** Because `parse_aprs_path` treats `<TOKEN>-<INT>` as `ALIAS-N`, callsigns with SSIDs (e.g. `F4JXQ-9`) must be written as full EIDs (`dtn://f4jxq-9/`) for strict hops.
+- **SSID disambiguation guarantee:** Because only New n-N (`<SCOPE><n>-<N>` or `<SCOPE>-<n>-<N>`) is parsed as a `ScopedAlias`, amateur radio callsigns with SSIDs (e.g., `F4JXQ-9`, `F4JXQ-1`, `N0CALL-15`) and legacy non-n-N strings (`VHF-2`, `ARES-2`) unambiguously parse as `StrictTarget` hops without colliding with aliases.
 
 ### Decision 3: Kind 2 APRS Aliases — ANSRVR-Style Group Aliases (`dtn://<node>/ansrvr`) (Phase 2)
 
@@ -65,7 +68,7 @@ To support amateur-radio group announcements and group-scoped Block 200 routing:
      - `K <group>` / `KEEPALIVE <group>` — refresh subscription TTL
      - `L` / `LIST [group]` — reply with active groups / subscriber list
      - `CQ <group> <message>` — fan-out announcement bundle to each subscribed member EID
-  2. Active SQLite subscriptions are fed into `RegoRoutingEngine` (bumping `policy_version` and notifying `RegoRib`) so Block 200 group alias hops (e.g. `ARES-2`, `CQ-1`) route/replicate to currently connected peers subscribed to that group.
+  2. Active SQLite subscriptions are fed into `RegoRoutingEngine` (bumping `policy_version` and notifying `RegoRib`) so Block 200 New n-N group alias hops (e.g. `ARES2-2`, `CQ1-1`) route/replicate to currently connected peers subscribed to that group.
 - **Security, CRA, and IAM constraints (mandatory for Phase 2):**
   - **Source-only self-management:** `J`, `U`, and `K` apply strictly to `bundle.primary.source` (normalized to node EID); third-party subscribe/unsubscribe requests are rejected.
   - **BPSec enforcement:** `/ansrvr` honours the station's `DirectionalKeyStore` / `VerifyPolicy` (`Strict` / `Warn` / `Ignore`).

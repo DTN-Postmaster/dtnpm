@@ -62,12 +62,15 @@ clas:
     address: "[::]:4556"
     # Plaintext mode (RFC 9174 without TLS) compliant with amateur radio rules
     require-tls: false
+    # Optional APRS CLA/band aliases (automatic transport tag 'TCPCL' is also added)
+    aliases: ["44NET"]
     peers: []
 
   # Example: AX.25 KISS TNC via Direwolf soundmodem TCP port
   # - name: "kiss-vhf"
   #   type: "hqfbp"
   #   callsign: "N0CALL-1"
+  #   aliases: ["VHF", "2M"]
   #   transport:
   #     type: "tcp"
   #     address: "127.0.0.1:8001"
@@ -77,16 +80,29 @@ clas:
   # - name: "ltp-udp"
   #   type: "ltp"
   #   engine-id: 1001
+  #   aliases: ["QO100"]
   #   transport:
   #     type: "udp"
   #     bind-addr: "0.0.0.0:1113"
 
-# Static Routing Rules
-# --------------------
-# Route outgoing bundles matching pattern through the designated CLA
+# Unified OPA/Rego Routing & Built-in ANSRVR Group Service (ADR-0001)
+# --------------------------------------------------------------------
+rego-routing:
+  record-treb: false
+  ansrvr:
+    enabled: true
+    service-name: "ansrvr"
+    default-ttl-secs: 86400
+    cq-rate-limit-secs: 15
+
+# Static Routing Rules (FALLBACK layer for plain bundles)
+# -------------------------------------------------------
+# Direct connected peers, APRS strict/CLA/group aliases, and Spray-and-Wait
+# are routed automatically by the embedded routing.rego policy.
 routes:
-  - pattern: "dtn://*/*"
+  - pattern: "dtn://gateway/*"
     cla: "tcpcl-hamnet"
+    next-hop: "dtn://gateway/"
 
 # RFC 9171 Ingress Validation Policy
 # ----------------------------------

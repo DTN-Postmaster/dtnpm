@@ -672,7 +672,7 @@ impl HamServer {
 
         // Register built-in ANSRVR group subscription & announcement service
         #[cfg(feature = "mod-rego-routing")]
-        let _ansrvr_pruner = if let Some(ref ansrvr_svc) = self.ansrvr_service {
+        if let Some(ref ansrvr_svc) = self.ansrvr_service {
             if let Err(e) = ansrvr_svc.sync_engine() {
                 warn!("Failed to sync initial ANSRVR subscriptions: {}", e);
             }
@@ -685,10 +685,12 @@ impl HamServer {
                 Ok(eid) => info!("Registered built-in ANSRVR service at EID: {}", eid),
                 Err(e) => warn!("Failed to register built-in ANSRVR service: {}", e),
             }
-            Some(ansrvr_svc.spawn_expiry_pruner(self.tasks.cancel_token().clone()))
-        } else {
-            None
-        };
+            let pruner_svc = ansrvr_svc.clone();
+            let cancel = self.tasks.cancel_token().clone();
+            hardy_async::spawn!(self.tasks, "ansrvr_expiry_pruner", async move {
+                pruner_svc.run_expiry_pruner(cancel).await;
+            });
+        }
 
         // Start storage quota & expiration reaper
         let _reaper = dtnpm_core::internal_storage::spawn_expiration_reaper(

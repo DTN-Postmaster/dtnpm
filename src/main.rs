@@ -169,6 +169,7 @@ clas:
     type: tcpclv4
     address: "[::]:4556" # Local listening port
     require-tls: false   # Disabled for amateur radio compliance (no encryption)
+    aliases: ["44NET"]   # Automatic 'TCPCL' tag is also added by default
     peers:
       - "44.27.131.233:4556"
 
@@ -176,6 +177,7 @@ clas:
   - name: kiss-tnc-vhf
     type: hqfbp
     callsign: "N0CALL-1"
+    aliases: ["VHF", "2M"]
     transport:
       type: tcp # For Direwolf / soundmodem KISS server
       address: "127.0.0.1:8001"
@@ -185,14 +187,24 @@ clas:
   - name: ltp-udp-cislunar
     type: ltp
     engine-id: 1001
+    aliases: ["QO100"]
     transport:
       type: udp
       bind-addr: "0.0.0.0:1113"
 
-# Static routing rules
-routes:
-  - pattern: "dtn://*/*"
-    cla: "tcpcl-44net-gateway"
+# Unified OPA/Rego Routing & Built-in ANSRVR Group Service (ADR-0001)
+rego-routing:
+  record-treb: false
+  ansrvr:
+    enabled: true
+    service-name: "ansrvr"
+    default-ttl-secs: 86400
+    cq-rate-limit-secs: 15
+
+# Static routing rules (FALLBACK layer for plain bundles after RegoRib::decide)
+# Direct peers, APRS strict/CLA/group aliases, and Spray-and-Wait are handled
+# automatically by the embedded routing.rego policy without static wildcards.
+routes: []
 
 # RFC 9171 ingress validation policy toggles
 rfc9171-validity:
