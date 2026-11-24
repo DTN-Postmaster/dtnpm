@@ -49,6 +49,10 @@ pub struct HamServer {
     internal_storage: InternalStorage,
     route_manager: Arc<RouteManager>,
     keystore: Arc<DirectionalKeyStore>,
+    #[cfg(feature = "mod-rego-routing")]
+    ansrvr_service: Option<Arc<dtnpm_mod_rego_routing::AnsrvrService>>,
+    #[cfg(feature = "mod-rego-routing")]
+    ansrvr_service_name: String,
     _ephemeral_dir: Option<tempfile::TempDir>,
     tasks: TaskPool,
 }
@@ -525,7 +529,7 @@ impl HamServer {
             )));
             #[cfg(feature = "mod-rego-routing")]
             {
-                modules.push(rego_module);
+                modules.push(rego_module.clone());
             }
             for module in &modules {
                 for pack in module.filter_packs() {
@@ -562,6 +566,29 @@ impl HamServer {
             Arc::new(DirectionalKeyStore::load_or_init(&keystore_path)?)
         };
 
+        #[cfg(feature = "mod-rego-routing")]
+        let (ansrvr_service, ansrvr_service_name) = {
+            let ansrvr_yaml = config
+                .rego_routing
+                .as_ref()
+                .map(|r| r.ansrvr.clone())
+                .unwrap_or_default();
+            let ansrvr_cfg = dtnpm_mod_rego_routing::AnsrvrConfig::from_yaml(&ansrvr_yaml);
+            let svc_name = ansrvr_cfg.service_name.clone();
+            let svc = if ansrvr_cfg.enabled {
+                let store = dtnpm_mod_rego_routing::AnsrvrStore::new(internal_storage.connection());
+                Some(Arc::new(dtnpm_mod_rego_routing::AnsrvrService::new(
+                    ansrvr_cfg,
+                    store,
+                    rego_module.engine().clone(),
+                    keystore.clone(),
+                )))
+            } else {
+                None
+            };
+            (svc, svc_name)
+        };
+
         Ok(Self {
             config,
             bpa,
@@ -577,6 +604,10 @@ impl HamServer {
             internal_storage,
             route_manager,
             keystore,
+            #[cfg(feature = "mod-rego-routing")]
+            ansrvr_service,
+            #[cfg(feature = "mod-rego-routing")]
+            ansrvr_service_name,
             _ephemeral_dir: ephemeral_dir,
             tasks,
         })
@@ -638,6 +669,26 @@ impl HamServer {
             Ok(eid) => info!("Registered permanent built-in Echo service at EID: {}", eid),
             Err(e) => warn!("Failed to register built-in Echo service: {}", e),
         }
+
+        // Register built-in ANSRVR group subscription & announcement service
+        #[cfg(feature = "mod-rego-routing")]
+        let _ansrvr_pruner = if let Some(ref ansrvr_svc) = self.ansrvr_service {
+            if let Err(e) = ansrvr_svc.sync_engine() {
+                warn!("Failed to sync initial ANSRVR subscriptions: {}", e);
+            }
+            let ansrvr_id = hardy_bpv7::eid::Service::Dtn(self.ansrvr_service_name.clone().into());
+            match self
+                .service_tracker
+                .register_service_with_type(ansrvr_id, ansrvr_svc.clone(), "Built-in ANSRVR")
+                .await
+            {
+                Ok(eid) => info!("Registered built-in ANSRVR service at EID: {}", eid),
+                Err(e) => warn!("Failed to register built-in ANSRVR service: {}", e),
+            }
+            Some(ansrvr_svc.spawn_expiry_pruner(self.tasks.cancel_token().clone()))
+        } else {
+            None
+        };
 
         // Start storage quota & expiration reaper
         let _reaper = dtnpm_core::internal_storage::spawn_expiration_reaper(

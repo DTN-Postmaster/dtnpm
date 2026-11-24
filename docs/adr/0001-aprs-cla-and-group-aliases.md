@@ -1,6 +1,6 @@
 # ADR-0001: Unified Rego Routing, CLA/Band Aliases, and ANSRVR Group Aliases
 
-- **Status:** Accepted (Phase 1 implemented; Phase 2 `/ansrvr` planned)
+- **Status:** Accepted & Implemented (Phase 1 + Phase 2)
 - **Date:** 2026-11-24
 - **Scope:** `dtnpm-core`, `dtnpm-mod-rego-routing`, `dtnpm`, and future `dtnpm-app-ansrvr` / module
 
@@ -70,7 +70,8 @@ To support amateur-radio group announcements and group-scoped Block 200 routing:
   - **Source-only self-management:** `J`, `U`, and `K` apply strictly to `bundle.primary.source` (normalized to node EID); third-party subscribe/unsubscribe requests are rejected.
   - **BPSec enforcement:** `/ansrvr` honours the station's `DirectionalKeyStore` / `VerifyPolicy` (`Strict` / `Warn` / `Ignore`).
   - **Reserved alias namespace:** Built-in transport tags (`TCPCL`, `LTP`, `HQFBP`, `MERCURY`) and configured CLA/band aliases cannot be registered or hijacked as user group names.
-  - **Resource bounds:** Bounded maximum groups, maximum subscribers per group, TTL expiration reaper, and per-source rate limiting on `CQ` fan-out.
+  - **Resource bounds:** Bounded maximum groups (`max-groups`), maximum subscribers per group (`max-members-per-group`), 60s TTL expiration reaper, and per-source rate limiting (`cq-rate-limit-secs`) on `CQ` fan-out.
+  - **REST API (`dtnpm-mod-rego-routing`):** `GET /api/rego_routing/v1/groups` and `DELETE /api/rego_routing/v1/groups/{group}?member=<node_eid>`.
 
 ### Decision 4: `record-treb` and Companion Fixes
 
