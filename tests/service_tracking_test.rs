@@ -99,10 +99,11 @@ async fn test_active_services_tracking_and_grpc_lifecycle() {
     assert_eq!(res.status(), reqwest::StatusCode::OK);
     let svcs: Vec<serde_json::Value> = res.json().await.expect("valid JSON response");
 
-    // Permanent Echo, Chat, Files, and SenML services should always be active
-    assert_eq!(svcs.len(), 4);
+    // Permanent Echo, ANSRVR, Chat, Files, and SenML services should always be active
+    assert_eq!(svcs.len(), 5);
     let initial_eids: Vec<&str> = svcs.iter().filter_map(|s| s["eid"].as_str()).collect();
     assert!(initial_eids.contains(&"dtn://f4test/echo"));
+    assert!(initial_eids.contains(&"dtn://f4test/ansrvr"));
     assert!(initial_eids.contains(&"dtn://f4test/chat"));
     assert!(initial_eids.contains(&"dtn://f4test/files"));
     assert!(initial_eids.contains(&"dtn://f4test/senml"));
@@ -131,10 +132,11 @@ async fn test_active_services_tracking_and_grpc_lifecycle() {
         .await
         .expect("services request should succeed");
     let svcs2: Vec<serde_json::Value> = res2.json().await.expect("valid JSON response");
-    assert_eq!(svcs2.len(), 5);
+    assert_eq!(svcs2.len(), 6);
 
     let eids: Vec<&str> = svcs2.iter().filter_map(|s| s["eid"].as_str()).collect();
     assert!(eids.contains(&"dtn://f4test/echo"));
+    assert!(eids.contains(&"dtn://f4test/ansrvr"));
     assert!(eids.contains(&"dtn://f4test/chat"));
     assert!(eids.contains(&"dtn://f4test/files"));
     assert!(eids.contains(&"dtn://f4test/senml"));
@@ -154,16 +156,17 @@ async fn test_active_services_tracking_and_grpc_lifecycle() {
     // Wait a brief moment for unregistration to propagate
     tokio::time::sleep(Duration::from_millis(200)).await;
 
-    // Verify incoming service is gone and only echo + chat + files + senml remain
+    // Verify incoming service is gone and only echo + ansrvr + chat + files + senml remain
     let res3 = client
         .get("http://127.0.0.1:8888/api/v1/services")
         .send()
         .await
         .expect("services request should succeed");
     let svcs3: Vec<serde_json::Value> = res3.json().await.expect("valid JSON response");
-    assert_eq!(svcs3.len(), 4);
+    assert_eq!(svcs3.len(), 5);
     let final_eids: Vec<&str> = svcs3.iter().filter_map(|s| s["eid"].as_str()).collect();
     assert!(final_eids.contains(&"dtn://f4test/echo"));
+    assert!(final_eids.contains(&"dtn://f4test/ansrvr"));
     assert!(final_eids.contains(&"dtn://f4test/chat"));
     assert!(final_eids.contains(&"dtn://f4test/files"));
     assert!(final_eids.contains(&"dtn://f4test/senml"));
