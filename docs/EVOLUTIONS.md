@@ -228,4 +228,4 @@ Integrate Hardy's official `hardy-file-cla` crate into `dtn-hdy-ham` to enable e
 - Web UI integration (displaying the file CLA status and the count of dropped/read bundles).
 
 ### Evaluation Status
-> **Implemented (`cla-file` feature)**: `hardy-file-cla` is integrated in `dtnpm` (`type: "file-cla"` / `"file"`, multi-instance support, tilde expansion, automatic `FILE` + custom APRS aliases). Future enhancements may add USB hotplug mount detection, atomic `.tmp`→rename writes, and WebUI spool counters.
+> **Implemented (`cla-file` feature, [ADR 23](../adr/0023-file-based-cla-security-and-sneakernet-spooling.md))**: `hardy-file-cla` is integrated in `dtnpm` (`type: "file-cla"` / `"file"`, multi-instance support, tilde expansion, automatic `FILE` + custom APRS aliases, fail-closed `0700` spool dirs with `allow-permissive-spool` opt-in, default `64 MiB` `max-bundle-size` DoS cap, path-safety registry, and dry-run `dtnpm check-config`). Future enhancements track upstream `hardy-file-cla` hardening (atomic `.tmp`→rename writes, `O_NOFOLLOW`, USB hotplug mount recovery) and WebUI spool counters.

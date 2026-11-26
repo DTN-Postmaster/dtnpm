@@ -26,3 +26,4 @@ This directory contains records of the major architectural and design decisions 
 20. [ADR 20: BPSec BIB Authentication, Directional Keystore & In-Browser Key Management](0020-bpsec-bib-authentication-and-keystore.md)
 21. [ADR 21: RFC 8428 SenML Telemetry Ingestion, SQLite Normalization, Open MCT API & Interactive Dashboard](0021-senml-telemetry-gateway-and-dashboard.md)
 22. [ADR 22: Security Hardening, IAM Enforcement & EU CRA Alignment](0022-security-hardening-and-cra-compliance.md)
+23. [ADR 23: File-Based CLA Integration, Security Boundaries, and Sneakernet Spooling](0023-file-based-cla-security-and-sneakernet-spooling.md)
