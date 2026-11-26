@@ -730,3 +730,103 @@ async fn test_file_cla_rejects_shared_peer_inbox_within_same_cla() {
         "expected distinct inbox error mentioning 'shared-usb', got: {msg}"
     );
 }
+
+#[tokio::test]
+async fn test_file_cla_enforces_max_bundle_size() {
+    let tmp = tempdir().expect("tempdir");
+
+    // 1. max-bundle-size = 0 must be rejected at startup
+    let zero_cfg = HamConfig {
+        callsign: Some("F4ZERO".to_string()),
+        node_id: "dtn://f4zero/".to_string(),
+        storage: StorageConfig {
+            in_memory: true,
+            ..Default::default()
+        },
+        grpc: GrpcConfig {
+            enabled: false,
+            ..Default::default()
+        },
+        clas: vec![ClaConfig {
+            name: "zero-cap".to_string(),
+            cla_type: ClaType::Other {
+                cla_type: "file-cla".to_string(),
+                config: json!({
+                    "max-bundle-size": 0,
+                    "outbox": tmp.path().join("zero_out")
+                }),
+            },
+            policy: None,
+            schedule: None,
+            aliases: Vec::new(),
+        }],
+        ..Default::default()
+    };
+    let err = match HamServer::new(zero_cfg).await {
+        Ok(_) => panic!("expected startup failure for max-bundle-size = 0"),
+        Err(e) => e,
+    };
+    let msg = err.to_string();
+    assert!(
+        msg.contains("zero-cap") && msg.contains("max-bundle-size"),
+        "expected error mentioning CLA name and max-bundle-size, got: {msg}"
+    );
+
+    // 2. Oversized file (> 1KB) is skipped unread, while valid small bundle dispatches
+    let outbox = tmp.path().join("cap_outbox");
+    let inbox = tmp.path().join("cap_inbox");
+    let cap_cfg = HamConfig {
+        callsign: Some("F4CAP".to_string()),
+        node_id: "dtn://f4capnode/".to_string(),
+        storage: StorageConfig {
+            in_memory: true,
+            ..Default::default()
+        },
+        grpc: GrpcConfig {
+            enabled: false,
+            ..Default::default()
+        },
+        clas: vec![ClaConfig {
+            name: "capped-usb".to_string(),
+            cla_type: ClaType::Other {
+                cla_type: "file-cla".to_string(),
+                config: json!({
+                    "max-bundle-size": "1KB",
+                    "outbox": outbox,
+                    "peers": {
+                        "dtn://f4cap/": inbox
+                    }
+                }),
+            },
+            policy: None,
+            schedule: None,
+            aliases: Vec::new(),
+        }],
+        ..Default::default()
+    };
+
+    let server = HamServer::new(cap_cfg).await.expect("server starts");
+    server.bpa().start(false).await;
+    tokio::time::sleep(Duration::from_millis(150)).await;
+
+    let over_cap_path = outbox.join("01_over_cap.bpv7");
+    std::fs::write(&over_cap_path, vec![0xAAu8; 2048]).expect("write oversized file");
+
+    let valid_bundle = build_bundle("dtn://f4src/app", "dtn://f4cap/chat", b"fits", None);
+    assert!(valid_bundle.len() < 1024);
+    std::fs::write(outbox.join("02_under_cap.bpv7"), valid_bundle).expect("write valid bundle");
+
+    let inbox_files = wait_for_file_count(&inbox, 1, Duration::from_secs(8)).await;
+    assert_eq!(inbox_files.len(), 1);
+    assert_eq!(extract_payload_bytes(&inbox_files[0]), b"fits");
+    assert!(
+        over_cap_path.exists(),
+        "oversized file must be skipped in place, not deleted"
+    );
+    assert!(
+        !outbox.join("refused").join("01_over_cap.bpv7").exists(),
+        "oversized file must not be moved to refused/"
+    );
+
+    server.shutdown().await;
+}

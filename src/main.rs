@@ -196,6 +196,7 @@ clas:
   # - name: file-usb
   #   type: file-cla
   #   aliases: ["USB"]
+  #   max-bundle-size: "64MB"
   #   outbox: "~/dtn-spool/usb/outbox"
   #   peers:
   #     "dtn://f4usb/": "~/dtn-spool/usb/inbox"

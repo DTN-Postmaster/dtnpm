@@ -487,41 +487,99 @@ impl HamServer {
                         }
                         #[cfg(feature = "cla-file")]
                         "file-cla" | "file" => {
-                            if let ClaType::Other {
-                                config: serde_json::Value::Object(ref map),
-                                ..
-                            } = cla_config.cla_type
-                            {
-                                let mut unknown: Vec<&str> = map
-                                    .keys()
-                                    .map(String::as_str)
-                                    .filter(|k| !matches!(*k, "outbox" | "peers"))
-                                    .collect();
-                                if !unknown.is_empty() {
-                                    unknown.sort_unstable();
-                                    anyhow::bail!(
-                                        "File CLA '{}' has unknown configuration field(s): {} (expected only 'outbox' and 'peers')",
-                                        cla_config.name,
-                                        unknown.join(", ")
-                                    );
-                                }
-                            }
+                            const DEFAULT_FILE_CLA_MAX_BUNDLE_SIZE: u64 = 64 * 1024 * 1024;
 
-                            let mut file_cfg = cla_config
-                            .cla_type
-                            .parse_as::<hardy_file_cla::Config>(cla_type.as_str())
-                            .with_context(|| {
-                                format!(
-                                    "Failed to parse file-cla configuration for CLA '{}'",
-                                    cla_config.name
-                                )
-                            })?
-                            .ok_or_else(|| {
-                                anyhow::anyhow!(
-                                    "CLA '{}' type mismatch while parsing file-cla configuration",
-                                    cla_config.name
-                                )
-                            })?;
+                            let mut parsed_max_bundle_size: Option<std::num::NonZeroU64> = None;
+                            let mut file_cfg_value = match &cla_config.cla_type {
+                                ClaType::Other {
+                                    config: serde_json::Value::Object(map),
+                                    ..
+                                } => {
+                                    let mut unknown: Vec<&str> = map
+                                        .keys()
+                                        .map(String::as_str)
+                                        .filter(|k| {
+                                            !matches!(
+                                                *k,
+                                                "outbox"
+                                                    | "peers"
+                                                    | "max-bundle-size"
+                                                    | "max_bundle_size"
+                                            )
+                                        })
+                                        .collect();
+                                    if !unknown.is_empty() {
+                                        unknown.sort_unstable();
+                                        anyhow::bail!(
+                                            "File CLA '{}' has unknown configuration field(s): {} (expected only 'outbox', 'peers', and optional 'max-bundle-size')",
+                                            cla_config.name,
+                                            unknown.join(", ")
+                                        );
+                                    }
+
+                                    let mut clean_map = map.clone();
+                                    let dash_val = clean_map.remove("max-bundle-size");
+                                    let under_val = clean_map.remove("max_bundle_size");
+                                    let raw_cap = match (dash_val, under_val) {
+                                        (Some(_), Some(_)) => {
+                                            anyhow::bail!(
+                                                "File CLA '{}' specifies both 'max-bundle-size' and 'max_bundle_size'",
+                                                cla_config.name
+                                            );
+                                        }
+                                        (Some(v), None) | (None, Some(v)) => Some(v),
+                                        (None, None) => None,
+                                    };
+                                    if let Some(v) = raw_cap {
+                                        let bytes = match v {
+                                            serde_json::Value::Number(n) => {
+                                                n.as_u64().ok_or_else(|| {
+                                                    anyhow::anyhow!(
+                                                        "File CLA '{}' has invalid 'max-bundle-size': expected a positive integer or byte size string",
+                                                        cla_config.name
+                                                    )
+                                                })?
+                                            }
+                                            serde_json::Value::String(s) => {
+                                                dtnpm_core::config::parse_byte_size(&s).map_err(|e| {
+                                                    anyhow::anyhow!(
+                                                        "File CLA '{}' has invalid 'max-bundle-size' ('{s}'): {e}",
+                                                        cla_config.name
+                                                    )
+                                                })?
+                                            }
+                                            _ => {
+                                                anyhow::bail!(
+                                                    "File CLA '{}' has invalid 'max-bundle-size': expected a positive integer or byte size string",
+                                                    cla_config.name
+                                                );
+                                            }
+                                        };
+                                        let nz = std::num::NonZeroU64::new(bytes).ok_or_else(|| {
+                                            anyhow::anyhow!(
+                                                "File CLA '{}' 'max-bundle-size' must be greater than 0",
+                                                cla_config.name
+                                            )
+                                        })?;
+                                        parsed_max_bundle_size = Some(nz);
+                                    }
+                                    serde_json::Value::Object(clean_map)
+                                }
+                                _ => serde_json::Value::Object(serde_json::Map::new()),
+                            };
+
+                            let max_bundle_size = parsed_max_bundle_size.or_else(|| {
+                                std::num::NonZeroU64::new(DEFAULT_FILE_CLA_MAX_BUNDLE_SIZE)
+                            });
+
+                            let mut file_cfg: hardy_file_cla::Config =
+                                serde_json::from_value(std::mem::take(&mut file_cfg_value))
+                                    .with_context(|| {
+                                        format!(
+                                            "Failed to parse file-cla configuration for CLA '{}'",
+                                            cla_config.name
+                                        )
+                                    })?;
                             if let Some(ref mut outbox) = file_cfg.outbox {
                                 *outbox = dtnpm_core::config::expand_tilde(outbox);
                             }
@@ -535,10 +593,11 @@ impl HamServer {
                                 );
                             }
                             info!(
-                                "Initializing File CLA '{}' (outbox={:?}, peers={})",
+                                "Initializing File CLA '{}' (outbox={:?}, peers={}, max_bundle_size={:?})",
                                 cla_config.name,
                                 file_cfg.outbox,
-                                file_cfg.peers.len()
+                                file_cfg.peers.len(),
+                                max_bundle_size
                             );
                             let cla = hardy_file_cla::Cla::new(&file_cfg).map_err(|e| {
                                 anyhow::anyhow!(
@@ -601,7 +660,11 @@ impl HamServer {
                             }
 
                             let cla: Arc<dyn Cla> = Arc::new(cla);
-                            (cla, ClaInit::default(), "file-cla")
+                            let init = ClaInit {
+                                max_bundle_size,
+                                ..ClaInit::default()
+                            };
+                            (cla, init, "file-cla")
                         }
                         _ => {
                             warn!(

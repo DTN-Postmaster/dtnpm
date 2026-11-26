@@ -91,6 +91,7 @@ clas:
   # - name: "file-usb"
   #   type: "file-cla"
   #   aliases: ["USB"]
+  #   max-bundle-size: "64MB"
   #   # External tool / USB copy drops raw BPv7 bundles here -> dtnpm ingests & deletes
   #   outbox: "~/dtn-spool/usb/outbox"
   #   # dtnpm writes outgoing bundles for each peer EID into its inbox directory
