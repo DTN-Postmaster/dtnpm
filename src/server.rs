@@ -572,7 +572,8 @@ impl HamServer {
                                     );
                                 }
                             }
-                            for inbox in file_cfg.peers.values() {
+                            let mut cla_inboxes = std::collections::HashSet::new();
+                            for (peer_eid, inbox) in &file_cfg.peers {
                                 let canon_inbox =
                                     std::fs::canonicalize(inbox).with_context(|| {
                                         format!(
@@ -581,6 +582,14 @@ impl HamServer {
                                             cla_config.name
                                         )
                                     })?;
+                                if !cla_inboxes.insert(canon_inbox.clone()) {
+                                    anyhow::bail!(
+                                        "File CLA '{}' maps multiple peers (including '{}') to the same inbox '{}'; each peer in a file-cla must have a distinct inbox directory",
+                                        cla_config.name,
+                                        peer_eid,
+                                        canon_inbox.display()
+                                    );
+                                }
                                 if file_cla_outboxes.contains(&canon_inbox) {
                                     anyhow::bail!(
                                         "File CLA '{}' shares directory '{}' as both outbox and peer inbox (would cause a forwarding loop)",

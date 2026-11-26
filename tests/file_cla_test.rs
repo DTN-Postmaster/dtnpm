@@ -685,3 +685,48 @@ clas:
     h_a.abort();
     h_b.abort();
 }
+
+#[tokio::test]
+async fn test_file_cla_rejects_shared_peer_inbox_within_same_cla() {
+    let tmp = tempdir().expect("tempdir");
+    let shared_inbox = tmp.path().join("shared_inbox");
+
+    let cfg = HamConfig {
+        callsign: Some("F4SHARE".to_string()),
+        node_id: "dtn://f4share/".to_string(),
+        storage: StorageConfig {
+            in_memory: true,
+            ..Default::default()
+        },
+        grpc: GrpcConfig {
+            enabled: false,
+            ..Default::default()
+        },
+        clas: vec![ClaConfig {
+            name: "shared-usb".to_string(),
+            cla_type: ClaType::Other {
+                cla_type: "file-cla".to_string(),
+                config: json!({
+                    "peers": {
+                        "dtn://f4peer1/": shared_inbox,
+                        "dtn://f4peer2/": shared_inbox
+                    }
+                }),
+            },
+            policy: None,
+            schedule: None,
+            aliases: Vec::new(),
+        }],
+        ..Default::default()
+    };
+
+    let err = match HamServer::new(cfg).await {
+        Ok(_) => panic!("expected startup failure when two peers share an inbox directory"),
+        Err(e) => e,
+    };
+    let msg = err.to_string();
+    assert!(
+        msg.contains("shared-usb") && msg.contains("distinct inbox"),
+        "expected distinct inbox error mentioning 'shared-usb', got: {msg}"
+    );
+}
