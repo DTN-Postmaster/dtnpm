@@ -193,6 +193,7 @@ clas:
       bind-addr: "0.0.0.0:1113"
 
   # 4. File-based CLA (Sneakernet / USB drive / external software bridge; auto tag 'FILE')
+  #    Dirs are created 0700; under systemd (ProtectHome=true), use /var/lib/dtnpm/spool/...
   # - name: file-usb
   #   type: file-cla
   #   aliases: ["USB"]

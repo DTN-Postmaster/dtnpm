@@ -830,3 +830,93 @@ async fn test_file_cla_enforces_max_bundle_size() {
 
     server.shutdown().await;
 }
+
+#[cfg(unix)]
+#[tokio::test]
+async fn test_file_cla_creates_spool_dirs_with_0700_permissions() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let tmp = tempdir().expect("tempdir");
+    let outbox = tmp.path().join("secure_spool/outbox");
+    let inbox = tmp.path().join("secure_spool/inbox");
+
+    let cfg = HamConfig {
+        callsign: Some("F4PERM".to_string()),
+        node_id: "dtn://f4perm/".to_string(),
+        storage: StorageConfig {
+            in_memory: true,
+            ..Default::default()
+        },
+        grpc: GrpcConfig {
+            enabled: false,
+            ..Default::default()
+        },
+        clas: vec![ClaConfig {
+            name: "perm-usb".to_string(),
+            cla_type: ClaType::Other {
+                cla_type: "file-cla".to_string(),
+                config: json!({
+                    "outbox": outbox,
+                    "peers": {
+                        "dtn://f4peer/": inbox
+                    }
+                }),
+            },
+            policy: None,
+            schedule: None,
+            aliases: Vec::new(),
+        }],
+        ..Default::default()
+    };
+
+    let server = HamServer::new(cfg).await.expect("server starts");
+    let out_mode = std::fs::metadata(&outbox)
+        .expect("outbox metadata")
+        .permissions()
+        .mode()
+        & 0o777;
+    let in_mode = std::fs::metadata(&inbox)
+        .expect("inbox metadata")
+        .permissions()
+        .mode()
+        & 0o777;
+    assert_eq!(out_mode, 0o700, "outbox should be created with 0700");
+    assert_eq!(in_mode, 0o700, "inbox should be created with 0700");
+    server.shutdown().await;
+
+    // Also verify failed overlap validation cleans up newly created directories.
+    let overlap_dir = tmp.path().join("stray_overlap/dir");
+    let bad_cfg = HamConfig {
+        callsign: Some("F4BAD".to_string()),
+        node_id: "dtn://f4bad/".to_string(),
+        storage: StorageConfig {
+            in_memory: true,
+            ..Default::default()
+        },
+        grpc: GrpcConfig {
+            enabled: false,
+            ..Default::default()
+        },
+        clas: vec![ClaConfig {
+            name: "stray-cla".to_string(),
+            cla_type: ClaType::Other {
+                cla_type: "file-cla".to_string(),
+                config: json!({
+                    "outbox": overlap_dir,
+                    "peers": {
+                        "dtn://f4peer/": overlap_dir
+                    }
+                }),
+            },
+            policy: None,
+            schedule: None,
+            aliases: Vec::new(),
+        }],
+        ..Default::default()
+    };
+    assert!(HamServer::new(bad_cfg).await.is_err());
+    assert!(
+        !tmp.path().join("stray_overlap").exists(),
+        "newly created spool directories should be cleaned up on validation failure"
+    );
+}

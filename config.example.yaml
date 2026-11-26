@@ -88,6 +88,9 @@ clas:
   # Example: File-based CLAs (Sneakernet / USB drive / external software bridge)
   # Multiple instances can target different directories and APRS aliases;
   # automatic transport tag 'FILE' is added to every file-cla instance.
+  # Missing spool directories are created with 0700 permissions; under systemd
+  # (dtnpm.service sets ProtectSystem=strict and ProtectHome=true), place spools
+  # under /var/lib/dtnpm/spool/... or add ReadWritePaths= to the unit override.
   # - name: "file-usb"
   #   type: "file-cla"
   #   aliases: ["USB"]

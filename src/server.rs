@@ -592,6 +592,107 @@ impl HamServer {
                                     cla_config.name
                                 );
                             }
+
+                            // Ensure spool directories exist with 0700 permissions and validate
+                            // before registering/starting hardy-file-cla; clean up newly created
+                            // directories if validation fails.
+                            let mut created_dirs = Vec::new();
+                            let validate_res: anyhow::Result<(
+                                Option<std::path::PathBuf>,
+                                Vec<std::path::PathBuf>,
+                            )> = (|| {
+                                let canon_outbox = if let Some(ref outbox) = file_cfg.outbox {
+                                    ensure_file_cla_dir(
+                                        &cla_config.name,
+                                        outbox,
+                                        &mut created_dirs,
+                                    )?;
+                                    let canon = std::fs::canonicalize(outbox).with_context(|| {
+                                        format!(
+                                            "Failed to canonicalize outbox '{}' for File CLA '{}'",
+                                            outbox.display(),
+                                            cla_config.name
+                                        )
+                                    })?;
+                                    #[cfg(unix)]
+                                    warn_if_permissive_spool_dir(
+                                        &cla_config.name,
+                                        "outbox",
+                                        &canon,
+                                    );
+                                    if file_cla_inboxes.contains(&canon) {
+                                        anyhow::bail!(
+                                            "File CLA '{}' shares directory '{}' as both outbox and peer inbox (would cause a forwarding loop)",
+                                            cla_config.name,
+                                            canon.display()
+                                        );
+                                    }
+                                    if file_cla_outboxes.contains(&canon) {
+                                        anyhow::bail!(
+                                            "File CLA '{}' outbox '{}' is already watched by another file-cla instance",
+                                            cla_config.name,
+                                            canon.display()
+                                        );
+                                    }
+                                    Some(canon)
+                                } else {
+                                    None
+                                };
+
+                                let mut cla_inboxes = std::collections::HashSet::new();
+                                let mut validated_inboxes =
+                                    Vec::with_capacity(file_cfg.peers.len());
+                                for (peer_eid, inbox) in &file_cfg.peers {
+                                    ensure_file_cla_dir(
+                                        &cla_config.name,
+                                        inbox,
+                                        &mut created_dirs,
+                                    )?;
+                                    let canon = std::fs::canonicalize(inbox).with_context(|| {
+                                        format!(
+                                            "Failed to canonicalize inbox '{}' for File CLA '{}'",
+                                            inbox.display(),
+                                            cla_config.name
+                                        )
+                                    })?;
+                                    #[cfg(unix)]
+                                    warn_if_permissive_spool_dir(
+                                        &cla_config.name,
+                                        "peer inbox",
+                                        &canon,
+                                    );
+                                    if !cla_inboxes.insert(canon.clone()) {
+                                        anyhow::bail!(
+                                            "File CLA '{}' maps multiple peers (including '{}') to the same inbox '{}'; each peer in a file-cla must have a distinct inbox directory",
+                                            cla_config.name,
+                                            peer_eid,
+                                            canon.display()
+                                        );
+                                    }
+                                    if canon_outbox.as_ref() == Some(&canon)
+                                        || file_cla_outboxes.contains(&canon)
+                                    {
+                                        anyhow::bail!(
+                                            "File CLA '{}' shares directory '{}' as both outbox and peer inbox (would cause a forwarding loop)",
+                                            cla_config.name,
+                                            canon.display()
+                                        );
+                                    }
+                                    validated_inboxes.push(canon);
+                                }
+                                Ok((canon_outbox, validated_inboxes))
+                            })();
+
+                            let (canon_outbox, validated_inboxes) = match validate_res {
+                                Ok(v) => v,
+                                Err(e) => {
+                                    for dir in created_dirs.iter().rev() {
+                                        let _ = std::fs::remove_dir(dir);
+                                    }
+                                    return Err(e);
+                                }
+                            };
+
                             info!(
                                 "Initializing File CLA '{}' (outbox={:?}, peers={}, max_bundle_size={:?})",
                                 cla_config.name,
@@ -600,64 +701,19 @@ impl HamServer {
                                 max_bundle_size
                             );
                             let cla = hardy_file_cla::Cla::new(&file_cfg).map_err(|e| {
+                                for dir in created_dirs.iter().rev() {
+                                    let _ = std::fs::remove_dir(dir);
+                                }
                                 anyhow::anyhow!(
                                     "Failed to initialize File CLA '{}': {e}",
                                     cla_config.name
                                 )
                             })?;
 
-                            // Guard against duplicate outbox watchers and outbox/inbox forwarding loops.
-                            if let Some(ref outbox) = file_cfg.outbox {
-                                let canon_outbox =
-                                    std::fs::canonicalize(outbox).with_context(|| {
-                                        format!(
-                                            "Failed to canonicalize outbox '{}' for File CLA '{}'",
-                                            outbox.display(),
-                                            cla_config.name
-                                        )
-                                    })?;
-                                if file_cla_inboxes.contains(&canon_outbox) {
-                                    anyhow::bail!(
-                                        "File CLA '{}' shares directory '{}' as both outbox and peer inbox (would cause a forwarding loop)",
-                                        cla_config.name,
-                                        canon_outbox.display()
-                                    );
-                                }
-                                if !file_cla_outboxes.insert(canon_outbox.clone()) {
-                                    anyhow::bail!(
-                                        "File CLA '{}' outbox '{}' is already watched by another file-cla instance",
-                                        cla_config.name,
-                                        canon_outbox.display()
-                                    );
-                                }
+                            if let Some(canon) = canon_outbox {
+                                file_cla_outboxes.insert(canon);
                             }
-                            let mut cla_inboxes = std::collections::HashSet::new();
-                            for (peer_eid, inbox) in &file_cfg.peers {
-                                let canon_inbox =
-                                    std::fs::canonicalize(inbox).with_context(|| {
-                                        format!(
-                                            "Failed to canonicalize inbox '{}' for File CLA '{}'",
-                                            inbox.display(),
-                                            cla_config.name
-                                        )
-                                    })?;
-                                if !cla_inboxes.insert(canon_inbox.clone()) {
-                                    anyhow::bail!(
-                                        "File CLA '{}' maps multiple peers (including '{}') to the same inbox '{}'; each peer in a file-cla must have a distinct inbox directory",
-                                        cla_config.name,
-                                        peer_eid,
-                                        canon_inbox.display()
-                                    );
-                                }
-                                if file_cla_outboxes.contains(&canon_inbox) {
-                                    anyhow::bail!(
-                                        "File CLA '{}' shares directory '{}' as both outbox and peer inbox (would cause a forwarding loop)",
-                                        cla_config.name,
-                                        canon_inbox.display()
-                                    );
-                                }
-                                file_cla_inboxes.insert(canon_inbox);
-                            }
+                            file_cla_inboxes.extend(validated_inboxes);
 
                             let cla: Arc<dyn Cla> = Arc::new(cla);
                             let init = ClaInit {
@@ -1155,5 +1211,69 @@ impl HamServer {
     #[must_use]
     pub fn keystore(&self) -> Arc<DirectionalKeyStore> {
         self.keystore.clone()
+    }
+}
+
+#[cfg(feature = "cla-file")]
+fn ensure_file_cla_dir(
+    cla_name: &str,
+    path: &std::path::Path,
+    created_dirs: &mut Vec<std::path::PathBuf>,
+) -> anyhow::Result<()> {
+    if path.exists() {
+        if !path.is_dir() {
+            anyhow::bail!(
+                "File CLA '{}' spool path '{}' exists and is not a directory",
+                cla_name,
+                path.display()
+            );
+        }
+        return Ok(());
+    }
+
+    let mut missing = Vec::new();
+    let mut cur = Some(path);
+    while let Some(p) = cur {
+        if p.as_os_str().is_empty() || p.exists() {
+            break;
+        }
+        missing.push(p.to_path_buf());
+        cur = p.parent();
+    }
+    missing.reverse();
+
+    let mut builder = std::fs::DirBuilder::new();
+    builder.recursive(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::DirBuilderExt;
+        builder.mode(0o700);
+    }
+    builder.create(path).with_context(|| {
+        format!(
+            "Failed to create spool directory '{}' for File CLA '{}'",
+            path.display(),
+            cla_name
+        )
+    })?;
+
+    created_dirs.extend(missing);
+    Ok(())
+}
+
+#[cfg(all(feature = "cla-file", unix))]
+fn warn_if_permissive_spool_dir(cla_name: &str, role: &str, path: &std::path::Path) {
+    use std::os::unix::fs::PermissionsExt;
+    if let Ok(meta) = std::fs::metadata(path) {
+        let mode = meta.permissions().mode() & 0o777;
+        if mode & 0o077 != 0 {
+            warn!(
+                "File CLA '{}' {} '{}' has permissive mode {:04o}; recommend 'chmod 0700' so untrusted local users cannot inject or read bundles",
+                cla_name,
+                role,
+                path.display(),
+                mode
+            );
+        }
     }
 }
