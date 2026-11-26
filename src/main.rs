@@ -60,6 +60,8 @@ struct Cli {
 enum Commands {
     /// Print an annotated example configuration file
     GenerateConfig,
+    /// Validate configuration file without creating spool directories or starting the BPA
+    CheckConfig,
     /// Run the interactive configuration wizard
     Init {
         /// Optional path where to save the configuration file
@@ -348,6 +350,10 @@ async fn main() -> anyhow::Result<()> {
         return Ok(());
     }
 
+    if let Some(Commands::CheckConfig) = cli.command {
+        return handle_check_config_command(cli.config.as_deref(), cli.node_id.as_deref());
+    }
+
     if let Some(Commands::Init { output }) = cli.command {
         dtnpm::run_interactive_wizard(output.or(cli.config))?;
         return Ok(());
@@ -548,6 +554,64 @@ fn handle_token_command(config_path: Option<&Path>, action: TokenCommands) -> an
                 anyhow::bail!("Token '{id_or_name}' not found");
             }
         }
+    }
+    Ok(())
+}
+
+fn handle_check_config_command(
+    config_path: Option<&Path>,
+    node_id_override: Option<&str>,
+) -> anyhow::Result<()> {
+    let target = if let Some(explicit) = config_path {
+        explicit.to_path_buf()
+    } else {
+        HamConfig::find_config(None).ok_or_else(|| {
+            anyhow::anyhow!("No configuration file found to validate (pass -c <FILE>)")
+        })?
+    };
+
+    let mut config = HamConfig::load(Some(&target))?;
+    if let Some(nid) = node_id_override {
+        config.node_id = nid.to_string();
+    }
+
+    let mut endpoints = Vec::with_capacity(1 + config.admin_endpoints.len());
+    endpoints.push(
+        config
+            .node_id
+            .parse::<hardy_bpv7::eid::NodeId>()
+            .map_err(|e| anyhow::anyhow!("Invalid primary node-id '{}': {e}", config.node_id))?,
+    );
+    for ep in &config.admin_endpoints {
+        endpoints.push(
+            ep.parse::<hardy_bpv7::eid::NodeId>()
+                .map_err(|e| anyhow::anyhow!("Invalid admin-endpoint '{ep}': {e}"))?,
+        );
+    }
+    hardy_bpa::node_ids::NodeIds::try_from(endpoints.as_slice())
+        .map_err(|e| anyhow::anyhow!("Invalid node-ids configuration: {e}"))?;
+
+    #[cfg(feature = "cla-file")]
+    {
+        for w in dtnpm::file_cla::validate_file_clas_dry_run(&config)? {
+            eprintln!("WARN: {w}");
+        }
+    }
+
+    println!(
+        "Configuration OK ({}): node-id={}, clas={}, routes={}",
+        target.display(),
+        config.node_id,
+        config.clas.len(),
+        config.routes.len()
+    );
+    for cla in &config.clas {
+        println!(
+            "  - CLA '{}' (type={}, aliases={:?})",
+            cla.name,
+            cla.cla_type.type_name(),
+            cla.effective_aliases()
+        );
     }
     Ok(())
 }

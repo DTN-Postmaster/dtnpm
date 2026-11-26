@@ -1140,3 +1140,79 @@ async fn test_file_cla_rejects_permissive_dir_unless_opted_in() {
         .expect("server starts when allow-permissive-spool is true");
     server.shutdown().await;
 }
+
+#[cfg(feature = "cli")]
+#[test]
+fn test_dtnpm_check_config_dry_run() {
+    use std::process::Command;
+
+    let tmp = tempdir().expect("tempdir");
+    let missing_out = tmp.path().join("check_only_spool/outbox");
+    let missing_in = tmp.path().join("check_only_spool/inbox");
+    let valid_toml = tmp.path().join("valid.toml");
+    std::fs::write(
+        &valid_toml,
+        format!(
+            r#"
+node-id = "dtn://f4check/"
+
+[[clas]]
+name = "file-check"
+type = "file-cla"
+aliases = ["USB"]
+outbox = "{}"
+
+[clas.peers]
+"dtn://f4usb/" = "{}"
+"#,
+            missing_out.display(),
+            missing_in.display()
+        ),
+    )
+    .expect("write valid.toml");
+
+    let ok_out = Command::new(env!("CARGO_BIN_EXE_dtnpm"))
+        .args(["-c", &valid_toml.display().to_string(), "check-config"])
+        .output()
+        .expect("run dtnpm check-config");
+    assert!(
+        ok_out.status.success(),
+        "expected check-config success: {}",
+        String::from_utf8_lossy(&ok_out.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&ok_out.stdout);
+    assert!(stdout.contains("Configuration OK"));
+    assert!(stdout.contains("file-check"));
+    assert!(
+        !tmp.path().join("check_only_spool").exists(),
+        "check-config must not create spool directories"
+    );
+
+    let bad_toml = tmp.path().join("bad.toml");
+    let loop_dir = tmp.path().join("loop_dir");
+    std::fs::write(
+        &bad_toml,
+        format!(
+            r#"
+node-id = "dtn://f4badcheck/"
+
+[[clas]]
+name = "bad-loop"
+type = "file-cla"
+outbox = "{}"
+
+[clas.peers]
+"dtn://f4peer/" = "{}"
+"#,
+            loop_dir.display(),
+            loop_dir.display()
+        ),
+    )
+    .expect("write bad.toml");
+
+    let bad_out = Command::new(env!("CARGO_BIN_EXE_dtnpm"))
+        .args(["-c", &bad_toml.display().to_string(), "check-config"])
+        .output()
+        .expect("run dtnpm check-config on bad.toml");
+    assert!(!bad_out.status.success(), "expected check-config failure");
+}

@@ -430,6 +430,228 @@ pub(crate) fn init_file_cla(
     Ok((cla, init))
 }
 
+fn normalize_path_without_creating(path: &Path) -> anyhow::Result<PathBuf> {
+    let abs = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        std::env::current_dir()
+            .context("Failed to determine current working directory")?
+            .join(path)
+    };
+
+    let mut tail = Vec::new();
+    let mut cur = abs.as_path();
+    while !cur.exists() {
+        let Some(name) = cur.file_name() else {
+            break;
+        };
+        tail.push(name.to_os_string());
+        let Some(parent) = cur.parent() else {
+            break;
+        };
+        cur = parent;
+    }
+
+    let mut base = if cur.exists() {
+        std::fs::canonicalize(cur)
+            .with_context(|| format!("Failed to canonicalize '{}'", cur.display()))?
+    } else {
+        cur.to_path_buf()
+    };
+
+    for comp in tail.into_iter().rev() {
+        if comp == "." {
+            continue;
+        }
+        if comp == ".." {
+            base.pop();
+        } else {
+            base.push(comp);
+        }
+    }
+    Ok(base)
+}
+
+/// Validates all `file-cla` entries in `config` without creating directories or
+/// starting the BPA, returning any non-fatal operator warnings.
+pub fn validate_file_clas_dry_run(config: &HamConfig) -> anyhow::Result<Vec<String>> {
+    let mut registry = FileClaPathRegistry::for_config(config);
+    let mut warnings = Vec::new();
+
+    for cla_config in &config.clas {
+        let ClaType::Other { ref cla_type, .. } = cla_config.cla_type else {
+            continue;
+        };
+        if !matches!(
+            cla_type.trim().to_ascii_lowercase().as_str(),
+            "file-cla" | "file"
+        ) {
+            continue;
+        }
+
+        let parsed = parse_file_cla_config(cla_config)?;
+        if cla_config.schedule.is_some() {
+            warnings.push(format!(
+                "File CLA '{}' has 'schedule' configured, which is not supported by file-cla and will be ignored",
+                cla_config.name
+            ));
+        }
+        if cla_config.policy.is_some() {
+            warnings.push(format!(
+                "File CLA '{}' has 'policy' configured, which is not supported by file-cla and will be ignored",
+                cla_config.name
+            ));
+        }
+        if parsed.hardy_cfg.outbox.is_none() && parsed.hardy_cfg.peers.is_empty() {
+            warnings.push(format!(
+                "File CLA '{}' has neither 'outbox' nor 'peers' configured and will remain inert",
+                cla_config.name
+            ));
+        }
+
+        let canon_outbox = if let Some(ref outbox) = parsed.hardy_cfg.outbox {
+            if outbox.exists() && !outbox.is_dir() {
+                anyhow::bail!(
+                    "File CLA '{}' spool path '{}' exists and is not a directory",
+                    cla_config.name,
+                    outbox.display()
+                );
+            }
+            if !outbox.exists() {
+                warnings.push(format!(
+                    "File CLA '{}' outbox '{}' does not exist yet (will be created with mode 0700 at startup)",
+                    cla_config.name,
+                    outbox.display()
+                ));
+            }
+            let canon = normalize_path_without_creating(outbox)?;
+            if registry.inboxes.contains(&canon) {
+                anyhow::bail!(
+                    "File CLA '{}' shares directory '{}' as both outbox and peer inbox (would cause a forwarding loop)",
+                    cla_config.name,
+                    canon.display()
+                );
+            }
+            if registry.outboxes.contains(&canon) {
+                anyhow::bail!(
+                    "File CLA '{}' outbox '{}' is already watched by another file-cla instance",
+                    cla_config.name,
+                    canon.display()
+                );
+            }
+            if registry.protected_dirs.contains(&canon) {
+                anyhow::bail!(
+                    "File CLA '{}' outbox '{}' cannot point to a station storage, config, home, or root directory (would quarantine files into refused/)",
+                    cla_config.name,
+                    canon.display()
+                );
+            }
+            if registry.refused_dirs.contains(&canon) {
+                anyhow::bail!(
+                    "File CLA '{}' outbox '{}' cannot watch another file-cla's refused/ quarantine directory",
+                    cla_config.name,
+                    canon.display()
+                );
+            }
+            let refused_dir = canon.join("refused");
+            let canon_refused = std::fs::canonicalize(&refused_dir).ok();
+            if registry.outboxes.contains(&refused_dir)
+                || registry.inboxes.contains(&refused_dir)
+                || canon_refused
+                    .as_ref()
+                    .is_some_and(|r| registry.outboxes.contains(r) || registry.inboxes.contains(r))
+            {
+                anyhow::bail!(
+                    "File CLA '{}' outbox '{}' has a refused/ subdirectory that overlaps another file-cla spool directory",
+                    cla_config.name,
+                    canon.display()
+                );
+            }
+            #[cfg(unix)]
+            if outbox.exists() {
+                check_spool_dir_permissions(
+                    &cla_config.name,
+                    "outbox",
+                    &canon,
+                    parsed.allow_permissive_spool,
+                )?;
+            }
+            Some(canon)
+        } else {
+            None
+        };
+
+        let same_cla_refused = canon_outbox.as_ref().map(|o| {
+            let r = o.join("refused");
+            std::fs::canonicalize(&r).unwrap_or(r)
+        });
+
+        let mut cla_inboxes = HashSet::new();
+        let mut validated_inboxes = Vec::with_capacity(parsed.hardy_cfg.peers.len());
+        for (peer_eid, inbox) in &parsed.hardy_cfg.peers {
+            if inbox.exists() && !inbox.is_dir() {
+                anyhow::bail!(
+                    "File CLA '{}' spool path '{}' exists and is not a directory",
+                    cla_config.name,
+                    inbox.display()
+                );
+            }
+            if !inbox.exists() {
+                warnings.push(format!(
+                    "File CLA '{}' peer '{}' inbox '{}' does not exist yet (will be created with mode 0700 at startup)",
+                    cla_config.name,
+                    peer_eid,
+                    inbox.display()
+                ));
+            }
+            let canon = normalize_path_without_creating(inbox)?;
+            if !cla_inboxes.insert(canon.clone()) {
+                anyhow::bail!(
+                    "File CLA '{}' maps multiple peers (including '{}') to the same inbox '{}'; each peer in a file-cla must have a distinct inbox directory",
+                    cla_config.name,
+                    peer_eid,
+                    canon.display()
+                );
+            }
+            if canon_outbox.as_ref() == Some(&canon) || registry.outboxes.contains(&canon) {
+                anyhow::bail!(
+                    "File CLA '{}' shares directory '{}' as both outbox and peer inbox (would cause a forwarding loop)",
+                    cla_config.name,
+                    canon.display()
+                );
+            }
+            if registry.refused_dirs.contains(&canon) || same_cla_refused.as_ref() == Some(&canon) {
+                anyhow::bail!(
+                    "File CLA '{}' peer inbox '{}' cannot target a file-cla refused/ quarantine directory",
+                    cla_config.name,
+                    canon.display()
+                );
+            }
+            #[cfg(unix)]
+            if inbox.exists() {
+                check_spool_dir_permissions(
+                    &cla_config.name,
+                    "peer inbox",
+                    &canon,
+                    parsed.allow_permissive_spool,
+                )?;
+            }
+            validated_inboxes.push(canon);
+        }
+
+        if let Some(canon) = canon_outbox {
+            registry.refused_dirs.insert(canon.join("refused"));
+            if let Ok(canon_refused) = std::fs::canonicalize(canon.join("refused")) {
+                registry.refused_dirs.insert(canon_refused);
+            }
+            registry.outboxes.insert(canon);
+        }
+        registry.inboxes.extend(validated_inboxes);
+    }
+
+    Ok(warnings)
+}
+
 fn is_empty_or_whitespace_path(path: &Path) -> bool {
     path.as_os_str().is_empty() || path.to_str().is_some_and(|s| s.trim().is_empty())
 }
@@ -636,5 +858,56 @@ mod tests {
         {
             assert!(registry.protected_dirs.contains(&home));
         }
+    }
+
+    #[test]
+    fn dry_run_validates_without_creating_dirs_and_catches_overlaps() {
+        let tmp = tempfile::tempdir().unwrap();
+        let missing_out = tmp.path().join("dry_run_spool/outbox");
+        let missing_in = tmp.path().join("dry_run_spool/inbox");
+
+        let ok_cfg = HamConfig {
+            clas: vec![make_cla(
+                "dry-ok",
+                json!({
+                    "outbox": missing_out,
+                    "peers": { "dtn://f4peer/": missing_in }
+                }),
+            )],
+            ..Default::default()
+        };
+        let warnings = validate_file_clas_dry_run(&ok_cfg).unwrap();
+        assert_eq!(warnings.len(), 2);
+        assert!(
+            !tmp.path().join("dry_run_spool").exists(),
+            "dry-run must not create missing spool directories"
+        );
+
+        let shared = tmp.path().join("dry_shared");
+        let loop_cfg = HamConfig {
+            clas: vec![make_cla(
+                "dry-loop",
+                json!({
+                    "outbox": shared,
+                    "peers": { "dtn://f4peer/": shared }
+                }),
+            )],
+            ..Default::default()
+        };
+        assert!(validate_file_clas_dry_run(&loop_cfg).is_err());
+
+        let dup_inbox_cfg = HamConfig {
+            clas: vec![make_cla(
+                "dry-dup",
+                json!({
+                    "peers": {
+                        "dtn://f4a/": tmp.path().join("same_in"),
+                        "dtn://f4b/": tmp.path().join("same_in")
+                    }
+                }),
+            )],
+            ..Default::default()
+        };
+        assert!(validate_file_clas_dry_run(&dup_inbox_cfg).is_err());
     }
 }
