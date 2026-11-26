@@ -197,34 +197,7 @@ impl HamServer {
         let mut tcp_peers = Vec::new();
         let mut coordinators = Vec::new();
         #[cfg(feature = "cla-file")]
-        let mut file_cla_outboxes: std::collections::HashSet<std::path::PathBuf> =
-            std::collections::HashSet::new();
-        #[cfg(feature = "cla-file")]
-        let mut file_cla_inboxes: std::collections::HashSet<std::path::PathBuf> =
-            std::collections::HashSet::new();
-        #[cfg(feature = "cla-file")]
-        let mut file_cla_refused_dirs: std::collections::HashSet<std::path::PathBuf> =
-            std::collections::HashSet::new();
-        #[cfg(feature = "cla-file")]
-        let file_cla_protected_dirs: std::collections::HashSet<std::path::PathBuf> = {
-            let mut set = std::collections::HashSet::new();
-            if let Ok(canon) = std::fs::canonicalize(config.storage.effective_data_dir()) {
-                set.insert(canon);
-            }
-            if let Ok(canon) = std::fs::canonicalize(config.storage.effective_payload_dir()) {
-                set.insert(canon);
-            }
-            if let Some(cfg_dir) = config
-                .config_path
-                .as_ref()
-                .and_then(|p| p.parent())
-                .filter(|p| !p.as_os_str().is_empty())
-                && let Ok(canon) = std::fs::canonicalize(cfg_dir)
-            {
-                set.insert(canon);
-            }
-            set
-        };
+        let mut file_cla_registry = FileClaPathRegistry::for_config(&config);
         for cla_config in config.clas.clone() {
             #[cfg(feature = "mod-rego-routing")]
             let cla_aliases = cla_config.effective_aliases();
@@ -520,322 +493,7 @@ impl HamServer {
                         }
                         #[cfg(feature = "cla-file")]
                         "file-cla" | "file" => {
-                            const DEFAULT_FILE_CLA_MAX_BUNDLE_SIZE: u64 = 64 * 1024 * 1024;
-
-                            let mut parsed_max_bundle_size: Option<std::num::NonZeroU64> = None;
-                            let mut file_cfg_value = match &cla_config.cla_type {
-                                ClaType::Other {
-                                    config: serde_json::Value::Object(map),
-                                    ..
-                                } => {
-                                    let mut unknown: Vec<&str> = map
-                                        .keys()
-                                        .map(String::as_str)
-                                        .filter(|k| {
-                                            !matches!(
-                                                *k,
-                                                "outbox"
-                                                    | "peers"
-                                                    | "max-bundle-size"
-                                                    | "max_bundle_size"
-                                            )
-                                        })
-                                        .collect();
-                                    if !unknown.is_empty() {
-                                        unknown.sort_unstable();
-                                        anyhow::bail!(
-                                            "File CLA '{}' has unknown configuration field(s): {} (expected only 'outbox', 'peers', and optional 'max-bundle-size')",
-                                            cla_config.name,
-                                            unknown.join(", ")
-                                        );
-                                    }
-
-                                    let mut clean_map = map.clone();
-                                    let dash_val = clean_map.remove("max-bundle-size");
-                                    let under_val = clean_map.remove("max_bundle_size");
-                                    let raw_cap = match (dash_val, under_val) {
-                                        (Some(_), Some(_)) => {
-                                            anyhow::bail!(
-                                                "File CLA '{}' specifies both 'max-bundle-size' and 'max_bundle_size'",
-                                                cla_config.name
-                                            );
-                                        }
-                                        (Some(v), None) | (None, Some(v)) => Some(v),
-                                        (None, None) => None,
-                                    };
-                                    if let Some(v) = raw_cap {
-                                        let bytes = match v {
-                                            serde_json::Value::Number(n) => {
-                                                n.as_u64().ok_or_else(|| {
-                                                    anyhow::anyhow!(
-                                                        "File CLA '{}' has invalid 'max-bundle-size': expected a positive integer or byte size string",
-                                                        cla_config.name
-                                                    )
-                                                })?
-                                            }
-                                            serde_json::Value::String(s) => {
-                                                dtnpm_core::config::parse_byte_size(&s).map_err(|e| {
-                                                    anyhow::anyhow!(
-                                                        "File CLA '{}' has invalid 'max-bundle-size' ('{s}'): {e}",
-                                                        cla_config.name
-                                                    )
-                                                })?
-                                            }
-                                            _ => {
-                                                anyhow::bail!(
-                                                    "File CLA '{}' has invalid 'max-bundle-size': expected a positive integer or byte size string",
-                                                    cla_config.name
-                                                );
-                                            }
-                                        };
-                                        let nz = std::num::NonZeroU64::new(bytes).ok_or_else(|| {
-                                            anyhow::anyhow!(
-                                                "File CLA '{}' 'max-bundle-size' must be greater than 0",
-                                                cla_config.name
-                                            )
-                                        })?;
-                                        parsed_max_bundle_size = Some(nz);
-                                    }
-                                    serde_json::Value::Object(clean_map)
-                                }
-                                _ => serde_json::Value::Object(serde_json::Map::new()),
-                            };
-
-                            let max_bundle_size = parsed_max_bundle_size.or_else(|| {
-                                std::num::NonZeroU64::new(DEFAULT_FILE_CLA_MAX_BUNDLE_SIZE)
-                            });
-
-                            let mut file_cfg: hardy_file_cla::Config =
-                                serde_json::from_value(std::mem::take(&mut file_cfg_value))
-                                    .with_context(|| {
-                                        format!(
-                                            "Failed to parse file-cla configuration for CLA '{}'",
-                                            cla_config.name
-                                        )
-                                    })?;
-                            if cla_config.schedule.is_some() {
-                                warn!(
-                                    "File CLA '{}' has 'schedule' configured, which is not supported by file-cla and will be ignored",
-                                    cla_config.name
-                                );
-                            }
-                            if cla_config.policy.is_some() {
-                                warn!(
-                                    "File CLA '{}' has 'policy' configured, which is not supported by file-cla and will be ignored",
-                                    cla_config.name
-                                );
-                            }
-
-                            if let Some(ref outbox) = file_cfg.outbox {
-                                if is_empty_or_whitespace_path(outbox) {
-                                    anyhow::bail!(
-                                        "File CLA '{}' has an empty 'outbox' path",
-                                        cla_config.name
-                                    );
-                                }
-                                if is_dot_cwd_path(outbox) {
-                                    anyhow::bail!(
-                                        "File CLA '{}' outbox cannot be '.' (watching the working directory would quarantine station files into refused/)",
-                                        cla_config.name
-                                    );
-                                }
-                            }
-                            for (peer_eid, inbox) in &file_cfg.peers {
-                                if is_empty_or_whitespace_path(inbox) {
-                                    anyhow::bail!(
-                                        "File CLA '{}' has an empty inbox path for peer '{}'",
-                                        cla_config.name,
-                                        peer_eid
-                                    );
-                                }
-                            }
-
-                            if let Some(ref mut outbox) = file_cfg.outbox {
-                                *outbox = dtnpm_core::config::expand_tilde(outbox);
-                            }
-                            for inbox in file_cfg.peers.values_mut() {
-                                *inbox = dtnpm_core::config::expand_tilde(inbox);
-                            }
-                            if file_cfg.outbox.is_none() && file_cfg.peers.is_empty() {
-                                warn!(
-                                    "File CLA '{}' has neither 'outbox' nor 'peers' configured and will remain inert",
-                                    cla_config.name
-                                );
-                            }
-
-                            // Ensure spool directories exist with 0700 permissions and validate
-                            // before registering/starting hardy-file-cla; clean up newly created
-                            // directories if validation fails.
-                            let mut created_dirs = Vec::new();
-                            let validate_res: anyhow::Result<(
-                                Option<std::path::PathBuf>,
-                                Vec<std::path::PathBuf>,
-                            )> = (|| {
-                                let canon_outbox = if let Some(ref outbox) = file_cfg.outbox {
-                                    ensure_file_cla_dir(
-                                        &cla_config.name,
-                                        outbox,
-                                        &mut created_dirs,
-                                    )?;
-                                    let canon = std::fs::canonicalize(outbox).with_context(|| {
-                                        format!(
-                                            "Failed to canonicalize outbox '{}' for File CLA '{}'",
-                                            outbox.display(),
-                                            cla_config.name
-                                        )
-                                    })?;
-                                    #[cfg(unix)]
-                                    warn_if_permissive_spool_dir(
-                                        &cla_config.name,
-                                        "outbox",
-                                        &canon,
-                                    );
-                                    if file_cla_inboxes.contains(&canon) {
-                                        anyhow::bail!(
-                                            "File CLA '{}' shares directory '{}' as both outbox and peer inbox (would cause a forwarding loop)",
-                                            cla_config.name,
-                                            canon.display()
-                                        );
-                                    }
-                                    if file_cla_outboxes.contains(&canon) {
-                                        anyhow::bail!(
-                                            "File CLA '{}' outbox '{}' is already watched by another file-cla instance",
-                                            cla_config.name,
-                                            canon.display()
-                                        );
-                                    }
-                                    if file_cla_protected_dirs.contains(&canon) {
-                                        anyhow::bail!(
-                                            "File CLA '{}' outbox '{}' cannot point to a station storage or config directory (would quarantine station files into refused/)",
-                                            cla_config.name,
-                                            canon.display()
-                                        );
-                                    }
-                                    if file_cla_refused_dirs.contains(&canon) {
-                                        anyhow::bail!(
-                                            "File CLA '{}' outbox '{}' cannot watch another file-cla's refused/ quarantine directory",
-                                            cla_config.name,
-                                            canon.display()
-                                        );
-                                    }
-                                    let refused_dir = canon.join("refused");
-                                    let canon_refused = std::fs::canonicalize(&refused_dir).ok();
-                                    if file_cla_outboxes.contains(&refused_dir)
-                                        || file_cla_inboxes.contains(&refused_dir)
-                                        || canon_refused.as_ref().is_some_and(|r| {
-                                            file_cla_outboxes.contains(r)
-                                                || file_cla_inboxes.contains(r)
-                                        })
-                                    {
-                                        anyhow::bail!(
-                                            "File CLA '{}' outbox '{}' has a refused/ subdirectory that overlaps another file-cla spool directory",
-                                            cla_config.name,
-                                            canon.display()
-                                        );
-                                    }
-                                    Some(canon)
-                                } else {
-                                    None
-                                };
-
-                                let mut cla_inboxes = std::collections::HashSet::new();
-                                let mut validated_inboxes =
-                                    Vec::with_capacity(file_cfg.peers.len());
-                                for (peer_eid, inbox) in &file_cfg.peers {
-                                    ensure_file_cla_dir(
-                                        &cla_config.name,
-                                        inbox,
-                                        &mut created_dirs,
-                                    )?;
-                                    let canon = std::fs::canonicalize(inbox).with_context(|| {
-                                        format!(
-                                            "Failed to canonicalize inbox '{}' for File CLA '{}'",
-                                            inbox.display(),
-                                            cla_config.name
-                                        )
-                                    })?;
-                                    #[cfg(unix)]
-                                    warn_if_permissive_spool_dir(
-                                        &cla_config.name,
-                                        "peer inbox",
-                                        &canon,
-                                    );
-                                    if !cla_inboxes.insert(canon.clone()) {
-                                        anyhow::bail!(
-                                            "File CLA '{}' maps multiple peers (including '{}') to the same inbox '{}'; each peer in a file-cla must have a distinct inbox directory",
-                                            cla_config.name,
-                                            peer_eid,
-                                            canon.display()
-                                        );
-                                    }
-                                    if canon_outbox.as_ref() == Some(&canon)
-                                        || file_cla_outboxes.contains(&canon)
-                                    {
-                                        anyhow::bail!(
-                                            "File CLA '{}' shares directory '{}' as both outbox and peer inbox (would cause a forwarding loop)",
-                                            cla_config.name,
-                                            canon.display()
-                                        );
-                                    }
-                                    if file_cla_refused_dirs.contains(&canon)
-                                        || canon_outbox
-                                            .as_ref()
-                                            .is_some_and(|o| o.join("refused") == canon)
-                                    {
-                                        anyhow::bail!(
-                                            "File CLA '{}' peer inbox '{}' cannot target a file-cla refused/ quarantine directory",
-                                            cla_config.name,
-                                            canon.display()
-                                        );
-                                    }
-                                    validated_inboxes.push(canon);
-                                }
-                                Ok((canon_outbox, validated_inboxes))
-                            })();
-
-                            let (canon_outbox, validated_inboxes) = match validate_res {
-                                Ok(v) => v,
-                                Err(e) => {
-                                    for dir in created_dirs.iter().rev() {
-                                        let _ = std::fs::remove_dir(dir);
-                                    }
-                                    return Err(e);
-                                }
-                            };
-
-                            info!(
-                                "Initializing File CLA '{}' (outbox={:?}, peers={}, max_bundle_size={:?})",
-                                cla_config.name,
-                                file_cfg.outbox,
-                                file_cfg.peers.len(),
-                                max_bundle_size
-                            );
-                            let cla = hardy_file_cla::Cla::new(&file_cfg).map_err(|e| {
-                                for dir in created_dirs.iter().rev() {
-                                    let _ = std::fs::remove_dir(dir);
-                                }
-                                anyhow::anyhow!(
-                                    "Failed to initialize File CLA '{}': {e}",
-                                    cla_config.name
-                                )
-                            })?;
-
-                            if let Some(canon) = canon_outbox {
-                                file_cla_refused_dirs.insert(canon.join("refused"));
-                                if let Ok(canon_refused) =
-                                    std::fs::canonicalize(canon.join("refused"))
-                                {
-                                    file_cla_refused_dirs.insert(canon_refused);
-                                }
-                                file_cla_outboxes.insert(canon);
-                            }
-                            file_cla_inboxes.extend(validated_inboxes);
-
-                            let cla: Arc<dyn Cla> = Arc::new(cla);
-                            let init = ClaInit {
-                                max_bundle_size,
-                                ..ClaInit::default()
-                            };
+                            let (cla, init) = init_file_cla(&cla_config, &mut file_cla_registry)?;
                             (cla, init, "file-cla")
                         }
                         _ => {
@@ -1328,6 +986,328 @@ impl HamServer {
     pub fn keystore(&self) -> Arc<DirectionalKeyStore> {
         self.keystore.clone()
     }
+}
+
+#[cfg(feature = "cla-file")]
+struct FileClaPathRegistry {
+    outboxes: std::collections::HashSet<std::path::PathBuf>,
+    inboxes: std::collections::HashSet<std::path::PathBuf>,
+    refused_dirs: std::collections::HashSet<std::path::PathBuf>,
+    protected_dirs: std::collections::HashSet<std::path::PathBuf>,
+}
+
+#[cfg(feature = "cla-file")]
+impl FileClaPathRegistry {
+    fn for_config(config: &HamConfig) -> Self {
+        let mut protected_dirs = std::collections::HashSet::new();
+        if let Ok(canon) = std::fs::canonicalize(config.storage.effective_data_dir()) {
+            protected_dirs.insert(canon);
+        }
+        if let Ok(canon) = std::fs::canonicalize(config.storage.effective_payload_dir()) {
+            protected_dirs.insert(canon);
+        }
+        if let Some(cfg_dir) = config
+            .config_path
+            .as_ref()
+            .and_then(|p| p.parent())
+            .filter(|p| !p.as_os_str().is_empty())
+            && let Ok(canon) = std::fs::canonicalize(cfg_dir)
+        {
+            protected_dirs.insert(canon);
+        }
+        Self {
+            outboxes: std::collections::HashSet::new(),
+            inboxes: std::collections::HashSet::new(),
+            refused_dirs: std::collections::HashSet::new(),
+            protected_dirs,
+        }
+    }
+}
+
+#[cfg(feature = "cla-file")]
+fn init_file_cla(
+    cla_config: &dtnpm_core::config::cla::ClaConfig,
+    registry: &mut FileClaPathRegistry,
+) -> anyhow::Result<(Arc<dyn Cla>, ClaInit)> {
+    const DEFAULT_FILE_CLA_MAX_BUNDLE_SIZE: u64 = 64 * 1024 * 1024;
+
+    let mut parsed_max_bundle_size: Option<std::num::NonZeroU64> = None;
+    let mut file_cfg_value = match &cla_config.cla_type {
+        ClaType::Other {
+            config: serde_json::Value::Object(map),
+            ..
+        } => {
+            let mut unknown: Vec<&str> = map
+                .keys()
+                .map(String::as_str)
+                .filter(|k| {
+                    !matches!(
+                        *k,
+                        "outbox" | "peers" | "max-bundle-size" | "max_bundle_size"
+                    )
+                })
+                .collect();
+            if !unknown.is_empty() {
+                unknown.sort_unstable();
+                anyhow::bail!(
+                    "File CLA '{}' has unknown configuration field(s): {} (expected only 'outbox', 'peers', and optional 'max-bundle-size')",
+                    cla_config.name,
+                    unknown.join(", ")
+                );
+            }
+
+            let mut clean_map = map.clone();
+            let dash_val = clean_map.remove("max-bundle-size");
+            let under_val = clean_map.remove("max_bundle_size");
+            let raw_cap = match (dash_val, under_val) {
+                (Some(_), Some(_)) => {
+                    anyhow::bail!(
+                        "File CLA '{}' specifies both 'max-bundle-size' and 'max_bundle_size'",
+                        cla_config.name
+                    );
+                }
+                (Some(v), None) | (None, Some(v)) => Some(v),
+                (None, None) => None,
+            };
+            if let Some(v) = raw_cap {
+                let bytes = match v {
+                    serde_json::Value::Number(n) => n.as_u64().ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "File CLA '{}' has invalid 'max-bundle-size': expected a positive integer or byte size string",
+                            cla_config.name
+                        )
+                    })?,
+                    serde_json::Value::String(s) => dtnpm_core::config::parse_byte_size(&s)
+                        .map_err(|e| {
+                            anyhow::anyhow!(
+                                "File CLA '{}' has invalid 'max-bundle-size' ('{s}'): {e}",
+                                cla_config.name
+                            )
+                        })?,
+                    _ => {
+                        anyhow::bail!(
+                            "File CLA '{}' has invalid 'max-bundle-size': expected a positive integer or byte size string",
+                            cla_config.name
+                        );
+                    }
+                };
+                let nz = std::num::NonZeroU64::new(bytes).ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "File CLA '{}' 'max-bundle-size' must be greater than 0",
+                        cla_config.name
+                    )
+                })?;
+                parsed_max_bundle_size = Some(nz);
+            }
+            serde_json::Value::Object(clean_map)
+        }
+        _ => serde_json::Value::Object(serde_json::Map::new()),
+    };
+
+    let max_bundle_size = parsed_max_bundle_size
+        .or_else(|| std::num::NonZeroU64::new(DEFAULT_FILE_CLA_MAX_BUNDLE_SIZE));
+
+    let mut file_cfg: hardy_file_cla::Config =
+        serde_json::from_value(std::mem::take(&mut file_cfg_value)).with_context(|| {
+            format!(
+                "Failed to parse file-cla configuration for CLA '{}'",
+                cla_config.name
+            )
+        })?;
+    if cla_config.schedule.is_some() {
+        warn!(
+            "File CLA '{}' has 'schedule' configured, which is not supported by file-cla and will be ignored",
+            cla_config.name
+        );
+    }
+    if cla_config.policy.is_some() {
+        warn!(
+            "File CLA '{}' has 'policy' configured, which is not supported by file-cla and will be ignored",
+            cla_config.name
+        );
+    }
+
+    if let Some(ref outbox) = file_cfg.outbox {
+        if is_empty_or_whitespace_path(outbox) {
+            anyhow::bail!("File CLA '{}' has an empty 'outbox' path", cla_config.name);
+        }
+        if is_dot_cwd_path(outbox) {
+            anyhow::bail!(
+                "File CLA '{}' outbox cannot be '.' (watching the working directory would quarantine station files into refused/)",
+                cla_config.name
+            );
+        }
+    }
+    for (peer_eid, inbox) in &file_cfg.peers {
+        if is_empty_or_whitespace_path(inbox) {
+            anyhow::bail!(
+                "File CLA '{}' has an empty inbox path for peer '{}'",
+                cla_config.name,
+                peer_eid
+            );
+        }
+    }
+
+    if let Some(ref mut outbox) = file_cfg.outbox {
+        *outbox = dtnpm_core::config::expand_tilde(outbox);
+    }
+    for inbox in file_cfg.peers.values_mut() {
+        *inbox = dtnpm_core::config::expand_tilde(inbox);
+    }
+    if file_cfg.outbox.is_none() && file_cfg.peers.is_empty() {
+        warn!(
+            "File CLA '{}' has neither 'outbox' nor 'peers' configured and will remain inert",
+            cla_config.name
+        );
+    }
+
+    // Ensure spool directories exist with 0700 permissions and validate
+    // before registering/starting hardy-file-cla; clean up newly created
+    // directories if validation fails.
+    let mut created_dirs = Vec::new();
+    let validate_res: anyhow::Result<(Option<std::path::PathBuf>, Vec<std::path::PathBuf>)> =
+        (|| {
+            let canon_outbox = if let Some(ref outbox) = file_cfg.outbox {
+                ensure_file_cla_dir(&cla_config.name, outbox, &mut created_dirs)?;
+                let canon = std::fs::canonicalize(outbox).with_context(|| {
+                    format!(
+                        "Failed to canonicalize outbox '{}' for File CLA '{}'",
+                        outbox.display(),
+                        cla_config.name
+                    )
+                })?;
+                #[cfg(unix)]
+                warn_if_permissive_spool_dir(&cla_config.name, "outbox", &canon);
+                if registry.inboxes.contains(&canon) {
+                    anyhow::bail!(
+                        "File CLA '{}' shares directory '{}' as both outbox and peer inbox (would cause a forwarding loop)",
+                        cla_config.name,
+                        canon.display()
+                    );
+                }
+                if registry.outboxes.contains(&canon) {
+                    anyhow::bail!(
+                        "File CLA '{}' outbox '{}' is already watched by another file-cla instance",
+                        cla_config.name,
+                        canon.display()
+                    );
+                }
+                if registry.protected_dirs.contains(&canon) {
+                    anyhow::bail!(
+                        "File CLA '{}' outbox '{}' cannot point to a station storage or config directory (would quarantine station files into refused/)",
+                        cla_config.name,
+                        canon.display()
+                    );
+                }
+                if registry.refused_dirs.contains(&canon) {
+                    anyhow::bail!(
+                        "File CLA '{}' outbox '{}' cannot watch another file-cla's refused/ quarantine directory",
+                        cla_config.name,
+                        canon.display()
+                    );
+                }
+                let refused_dir = canon.join("refused");
+                let canon_refused = std::fs::canonicalize(&refused_dir).ok();
+                if registry.outboxes.contains(&refused_dir)
+                    || registry.inboxes.contains(&refused_dir)
+                    || canon_refused.as_ref().is_some_and(|r| {
+                        registry.outboxes.contains(r) || registry.inboxes.contains(r)
+                    })
+                {
+                    anyhow::bail!(
+                        "File CLA '{}' outbox '{}' has a refused/ subdirectory that overlaps another file-cla spool directory",
+                        cla_config.name,
+                        canon.display()
+                    );
+                }
+                Some(canon)
+            } else {
+                None
+            };
+
+            let mut cla_inboxes = std::collections::HashSet::new();
+            let mut validated_inboxes = Vec::with_capacity(file_cfg.peers.len());
+            for (peer_eid, inbox) in &file_cfg.peers {
+                ensure_file_cla_dir(&cla_config.name, inbox, &mut created_dirs)?;
+                let canon = std::fs::canonicalize(inbox).with_context(|| {
+                    format!(
+                        "Failed to canonicalize inbox '{}' for File CLA '{}'",
+                        inbox.display(),
+                        cla_config.name
+                    )
+                })?;
+                #[cfg(unix)]
+                warn_if_permissive_spool_dir(&cla_config.name, "peer inbox", &canon);
+                if !cla_inboxes.insert(canon.clone()) {
+                    anyhow::bail!(
+                        "File CLA '{}' maps multiple peers (including '{}') to the same inbox '{}'; each peer in a file-cla must have a distinct inbox directory",
+                        cla_config.name,
+                        peer_eid,
+                        canon.display()
+                    );
+                }
+                if canon_outbox.as_ref() == Some(&canon) || registry.outboxes.contains(&canon) {
+                    anyhow::bail!(
+                        "File CLA '{}' shares directory '{}' as both outbox and peer inbox (would cause a forwarding loop)",
+                        cla_config.name,
+                        canon.display()
+                    );
+                }
+                if registry.refused_dirs.contains(&canon)
+                    || canon_outbox
+                        .as_ref()
+                        .is_some_and(|o| o.join("refused") == canon)
+                {
+                    anyhow::bail!(
+                        "File CLA '{}' peer inbox '{}' cannot target a file-cla refused/ quarantine directory",
+                        cla_config.name,
+                        canon.display()
+                    );
+                }
+                validated_inboxes.push(canon);
+            }
+            Ok((canon_outbox, validated_inboxes))
+        })();
+
+    let (canon_outbox, validated_inboxes) = match validate_res {
+        Ok(v) => v,
+        Err(e) => {
+            for dir in created_dirs.iter().rev() {
+                let _ = std::fs::remove_dir(dir);
+            }
+            return Err(e);
+        }
+    };
+
+    info!(
+        "Initializing File CLA '{}' (outbox={:?}, peers={}, max_bundle_size={:?})",
+        cla_config.name,
+        file_cfg.outbox,
+        file_cfg.peers.len(),
+        max_bundle_size
+    );
+    let cla = hardy_file_cla::Cla::new(&file_cfg).map_err(|e| {
+        for dir in created_dirs.iter().rev() {
+            let _ = std::fs::remove_dir(dir);
+        }
+        anyhow::anyhow!("Failed to initialize File CLA '{}': {e}", cla_config.name)
+    })?;
+
+    if let Some(canon) = canon_outbox {
+        registry.refused_dirs.insert(canon.join("refused"));
+        if let Ok(canon_refused) = std::fs::canonicalize(canon.join("refused")) {
+            registry.refused_dirs.insert(canon_refused);
+        }
+        registry.outboxes.insert(canon);
+    }
+    registry.inboxes.extend(validated_inboxes);
+
+    let cla: Arc<dyn Cla> = Arc::new(cla);
+    let init = ClaInit {
+        max_bundle_size,
+        ..ClaInit::default()
+    };
+    Ok((cla, init))
 }
 
 #[cfg(feature = "cla-file")]

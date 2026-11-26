@@ -13,6 +13,23 @@ use hardy_bpv7::eid::Eid;
 use serde_json::json;
 use tempfile::tempdir;
 
+fn file_cla_test_config(callsign: &str, clas: Vec<ClaConfig>) -> HamConfig {
+    HamConfig {
+        callsign: Some(callsign.to_string()),
+        node_id: format!("dtn://{}/", callsign.to_ascii_lowercase()),
+        storage: StorageConfig {
+            in_memory: true,
+            ..Default::default()
+        },
+        grpc: GrpcConfig {
+            enabled: false,
+            ..Default::default()
+        },
+        clas,
+        ..Default::default()
+    }
+}
+
 fn build_bundle(src: &str, dst: &str, payload: &[u8], aprs_path: Option<&str>) -> Vec<u8> {
     let src_eid: Eid = src.parse().expect("valid src eid");
     let dst_eid: Eid = dst.parse().expect("valid dst eid");
@@ -144,12 +161,22 @@ clas:
     );
 
     let forwarded_bytes = std::fs::read(&inbox_files[0]).expect("read forwarded bundle");
-    let parsed = hardy_bpv7::parse::parse(forwarded_bytes.into()).expect("valid BPv7 bundle");
+    let parsed =
+        hardy_bpv7::parse::parse(forwarded_bytes.clone().into()).expect("valid BPv7 bundle");
     assert_eq!(
         parsed.bundle.primary.destination.to_string(),
         "dtn://f4ext/chat"
     );
-    assert_eq!(extract_payload_bytes(&inbox_files[0]), b"hello-ext-cla");
+    let p_range = parsed
+        .bundle
+        .blocks
+        .get(&1)
+        .expect("bundle has payload block")
+        .payload_range();
+    assert_eq!(
+        &forwarded_bytes[p_range.start as usize..p_range.end as usize],
+        b"hello-ext-cla"
+    );
 
     server.shutdown().await;
 }
@@ -161,18 +188,9 @@ async fn test_multiple_file_clas_aprs_alias_routing() {
     let ext_in = tmp.path().join("ext_inbox");
     let ingest_out = tmp.path().join("ingest_outbox");
 
-    let config = HamConfig {
-        callsign: Some("F4APRS".to_string()),
-        node_id: "dtn://f4aprs/".to_string(),
-        storage: StorageConfig {
-            in_memory: true,
-            ..Default::default()
-        },
-        grpc: GrpcConfig {
-            enabled: false,
-            ..Default::default()
-        },
-        clas: vec![
+    let config = file_cla_test_config(
+        "F4APRS",
+        vec![
             ClaConfig {
                 name: "usb-club".to_string(),
                 cla_type: ClaType::Other {
@@ -214,8 +232,7 @@ async fn test_multiple_file_clas_aprs_alias_routing() {
                 aliases: Vec::new(),
             },
         ],
-        ..Default::default()
-    };
+    );
 
     let server = HamServer::new(config).await.expect("server starts");
     server.bpa().start(false).await;
@@ -294,18 +311,9 @@ async fn test_file_cla_fails_startup_on_uncreatable_path() {
     let blocked = tmp.path().join("blocked");
     std::fs::write(&blocked, b"not a directory").expect("create blocking file");
 
-    let config = HamConfig {
-        callsign: Some("F4FAIL".to_string()),
-        node_id: "dtn://f4fail/".to_string(),
-        storage: StorageConfig {
-            in_memory: true,
-            ..Default::default()
-        },
-        grpc: GrpcConfig {
-            enabled: false,
-            ..Default::default()
-        },
-        clas: vec![ClaConfig {
+    let config = file_cla_test_config(
+        "F4FAIL",
+        vec![ClaConfig {
             name: "broken-usb".to_string(),
             cla_type: ClaType::Other {
                 cla_type: "file-cla".to_string(),
@@ -317,8 +325,7 @@ async fn test_file_cla_fails_startup_on_uncreatable_path() {
             schedule: None,
             aliases: vec!["USB".to_string()],
         }],
-        ..Default::default()
-    };
+    );
 
     let err = match HamServer::new(config).await {
         Ok(_) => panic!("expected startup failure when file-cla outbox is a regular file"),
@@ -334,18 +341,9 @@ async fn test_file_cla_fails_startup_on_uncreatable_path() {
 #[tokio::test]
 async fn test_file_cla_rejects_unknown_config_field() {
     let tmp = tempdir().expect("tempdir");
-    let config = HamConfig {
-        callsign: Some("F4TYPO".to_string()),
-        node_id: "dtn://f4typo/".to_string(),
-        storage: StorageConfig {
-            in_memory: true,
-            ..Default::default()
-        },
-        grpc: GrpcConfig {
-            enabled: false,
-            ..Default::default()
-        },
-        clas: vec![ClaConfig {
+    let config = file_cla_test_config(
+        "F4TYPO",
+        vec![ClaConfig {
             name: "typo-usb".to_string(),
             cla_type: ClaType::Other {
                 cla_type: "file-cla".to_string(),
@@ -357,8 +355,7 @@ async fn test_file_cla_rejects_unknown_config_field() {
             schedule: None,
             aliases: vec!["USB".to_string()],
         }],
-        ..Default::default()
-    };
+    );
 
     let err = match HamServer::new(config).await {
         Ok(_) => panic!("expected startup failure on unknown file-cla field 'inbox'"),
@@ -377,18 +374,9 @@ async fn test_file_cla_rejects_outbox_inbox_overlap_and_duplicate_outbox() {
     let shared = tmp.path().join("shared_dir");
 
     // 1. Same directory configured as both outbox and peer inbox (forwarding loop)
-    let loop_cfg = HamConfig {
-        callsign: Some("F4LOOP".to_string()),
-        node_id: "dtn://f4loop/".to_string(),
-        storage: StorageConfig {
-            in_memory: true,
-            ..Default::default()
-        },
-        grpc: GrpcConfig {
-            enabled: false,
-            ..Default::default()
-        },
-        clas: vec![ClaConfig {
+    let loop_cfg = file_cla_test_config(
+        "F4LOOP",
+        vec![ClaConfig {
             name: "loop-cla".to_string(),
             cla_type: ClaType::Other {
                 cla_type: "file-cla".to_string(),
@@ -403,8 +391,7 @@ async fn test_file_cla_rejects_outbox_inbox_overlap_and_duplicate_outbox() {
             schedule: None,
             aliases: Vec::new(),
         }],
-        ..Default::default()
-    };
+    );
     let err = match HamServer::new(loop_cfg).await {
         Ok(_) => panic!("expected startup failure when outbox == inbox"),
         Err(e) => e,
@@ -416,18 +403,9 @@ async fn test_file_cla_rejects_outbox_inbox_overlap_and_duplicate_outbox() {
 
     // 2. Two file-cla instances watching the same outbox
     let dup_out = tmp.path().join("dup_outbox");
-    let dup_cfg = HamConfig {
-        callsign: Some("F4DUP".to_string()),
-        node_id: "dtn://f4dup/".to_string(),
-        storage: StorageConfig {
-            in_memory: true,
-            ..Default::default()
-        },
-        grpc: GrpcConfig {
-            enabled: false,
-            ..Default::default()
-        },
-        clas: vec![
+    let dup_cfg = file_cla_test_config(
+        "F4DUP",
+        vec![
             ClaConfig {
                 name: "usb-1".to_string(),
                 cla_type: ClaType::Other {
@@ -449,8 +427,7 @@ async fn test_file_cla_rejects_outbox_inbox_overlap_and_duplicate_outbox() {
                 aliases: Vec::new(),
             },
         ],
-        ..Default::default()
-    };
+    );
     let err = match HamServer::new(dup_cfg).await {
         Ok(_) => panic!("expected startup failure on duplicate outbox"),
         Err(e) => e,
@@ -540,8 +517,28 @@ clas:
     let bpa_b = srv_b.bpa();
     let h_b = tokio::spawn(async move { srv_b.run().await });
 
-    // Wait for gRPC servers, file watchers, and RegoRoutingAgent reconciliation.
-    tokio::time::sleep(Duration::from_millis(500)).await;
+    // Wait for gRPC servers to bind, then give file watchers a brief settle.
+    async fn wait_for_tcp_port(port: u16, timeout: Duration) {
+        let deadline = tokio::time::Instant::now() + timeout;
+        loop {
+            if tokio::net::TcpStream::connect(("127.0.0.1", port))
+                .await
+                .is_ok()
+            {
+                return;
+            }
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "timed out waiting for TCP port {port}"
+            );
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+    }
+    tokio::join!(
+        wait_for_tcp_port(grpc_a, Duration::from_secs(5)),
+        wait_for_tcp_port(grpc_b, Duration::from_secs(5)),
+    );
+    tokio::time::sleep(Duration::from_millis(150)).await;
 
     let mut print_b = AsyncCommand::new(env!("CARGO_BIN_EXE_dtnprint"))
         .env("HOME", tmp.path())
@@ -691,18 +688,9 @@ async fn test_file_cla_rejects_shared_peer_inbox_within_same_cla() {
     let tmp = tempdir().expect("tempdir");
     let shared_inbox = tmp.path().join("shared_inbox");
 
-    let cfg = HamConfig {
-        callsign: Some("F4SHARE".to_string()),
-        node_id: "dtn://f4share/".to_string(),
-        storage: StorageConfig {
-            in_memory: true,
-            ..Default::default()
-        },
-        grpc: GrpcConfig {
-            enabled: false,
-            ..Default::default()
-        },
-        clas: vec![ClaConfig {
+    let cfg = file_cla_test_config(
+        "F4SHARE",
+        vec![ClaConfig {
             name: "shared-usb".to_string(),
             cla_type: ClaType::Other {
                 cla_type: "file-cla".to_string(),
@@ -717,8 +705,7 @@ async fn test_file_cla_rejects_shared_peer_inbox_within_same_cla() {
             schedule: None,
             aliases: Vec::new(),
         }],
-        ..Default::default()
-    };
+    );
 
     let err = match HamServer::new(cfg).await {
         Ok(_) => panic!("expected startup failure when two peers share an inbox directory"),
@@ -736,18 +723,9 @@ async fn test_file_cla_enforces_max_bundle_size() {
     let tmp = tempdir().expect("tempdir");
 
     // 1. max-bundle-size = 0 must be rejected at startup
-    let zero_cfg = HamConfig {
-        callsign: Some("F4ZERO".to_string()),
-        node_id: "dtn://f4zero/".to_string(),
-        storage: StorageConfig {
-            in_memory: true,
-            ..Default::default()
-        },
-        grpc: GrpcConfig {
-            enabled: false,
-            ..Default::default()
-        },
-        clas: vec![ClaConfig {
+    let zero_cfg = file_cla_test_config(
+        "F4ZERO",
+        vec![ClaConfig {
             name: "zero-cap".to_string(),
             cla_type: ClaType::Other {
                 cla_type: "file-cla".to_string(),
@@ -760,8 +738,7 @@ async fn test_file_cla_enforces_max_bundle_size() {
             schedule: None,
             aliases: Vec::new(),
         }],
-        ..Default::default()
-    };
+    );
     let err = match HamServer::new(zero_cfg).await {
         Ok(_) => panic!("expected startup failure for max-bundle-size = 0"),
         Err(e) => e,
@@ -775,18 +752,9 @@ async fn test_file_cla_enforces_max_bundle_size() {
     // 2. Oversized file (> 1KB) is skipped unread, while valid small bundle dispatches
     let outbox = tmp.path().join("cap_outbox");
     let inbox = tmp.path().join("cap_inbox");
-    let cap_cfg = HamConfig {
-        callsign: Some("F4CAP".to_string()),
-        node_id: "dtn://f4capnode/".to_string(),
-        storage: StorageConfig {
-            in_memory: true,
-            ..Default::default()
-        },
-        grpc: GrpcConfig {
-            enabled: false,
-            ..Default::default()
-        },
-        clas: vec![ClaConfig {
+    let cap_cfg = file_cla_test_config(
+        "F4CAPNODE",
+        vec![ClaConfig {
             name: "capped-usb".to_string(),
             cla_type: ClaType::Other {
                 cla_type: "file-cla".to_string(),
@@ -802,8 +770,7 @@ async fn test_file_cla_enforces_max_bundle_size() {
             schedule: None,
             aliases: Vec::new(),
         }],
-        ..Default::default()
-    };
+    );
 
     let server = HamServer::new(cap_cfg).await.expect("server starts");
     server.bpa().start(false).await;
@@ -840,18 +807,9 @@ async fn test_file_cla_creates_spool_dirs_with_0700_permissions() {
     let outbox = tmp.path().join("secure_spool/outbox");
     let inbox = tmp.path().join("secure_spool/inbox");
 
-    let cfg = HamConfig {
-        callsign: Some("F4PERM".to_string()),
-        node_id: "dtn://f4perm/".to_string(),
-        storage: StorageConfig {
-            in_memory: true,
-            ..Default::default()
-        },
-        grpc: GrpcConfig {
-            enabled: false,
-            ..Default::default()
-        },
-        clas: vec![ClaConfig {
+    let cfg = file_cla_test_config(
+        "F4PERM",
+        vec![ClaConfig {
             name: "perm-usb".to_string(),
             cla_type: ClaType::Other {
                 cla_type: "file-cla".to_string(),
@@ -866,8 +824,7 @@ async fn test_file_cla_creates_spool_dirs_with_0700_permissions() {
             schedule: None,
             aliases: Vec::new(),
         }],
-        ..Default::default()
-    };
+    );
 
     let server = HamServer::new(cfg).await.expect("server starts");
     let out_mode = std::fs::metadata(&outbox)
@@ -886,18 +843,9 @@ async fn test_file_cla_creates_spool_dirs_with_0700_permissions() {
 
     // Also verify failed overlap validation cleans up newly created directories.
     let overlap_dir = tmp.path().join("stray_overlap/dir");
-    let bad_cfg = HamConfig {
-        callsign: Some("F4BAD".to_string()),
-        node_id: "dtn://f4bad/".to_string(),
-        storage: StorageConfig {
-            in_memory: true,
-            ..Default::default()
-        },
-        grpc: GrpcConfig {
-            enabled: false,
-            ..Default::default()
-        },
-        clas: vec![ClaConfig {
+    let bad_cfg = file_cla_test_config(
+        "F4BAD",
+        vec![ClaConfig {
             name: "stray-cla".to_string(),
             cla_type: ClaType::Other {
                 cla_type: "file-cla".to_string(),
@@ -912,8 +860,7 @@ async fn test_file_cla_creates_spool_dirs_with_0700_permissions() {
             schedule: None,
             aliases: Vec::new(),
         }],
-        ..Default::default()
-    };
+    );
     assert!(HamServer::new(bad_cfg).await.is_err());
     assert!(
         !tmp.path().join("stray_overlap").exists(),
@@ -926,18 +873,9 @@ async fn test_file_cla_rejects_dangerous_and_refused_paths() {
     let tmp = tempdir().expect("tempdir");
 
     // 1. Empty outbox path
-    let empty_cfg = HamConfig {
-        callsign: Some("F4EMPTY".to_string()),
-        node_id: "dtn://f4empty/".to_string(),
-        storage: StorageConfig {
-            in_memory: true,
-            ..Default::default()
-        },
-        grpc: GrpcConfig {
-            enabled: false,
-            ..Default::default()
-        },
-        clas: vec![ClaConfig {
+    let empty_cfg = file_cla_test_config(
+        "F4EMPTY",
+        vec![ClaConfig {
             name: "empty-cla".to_string(),
             cla_type: ClaType::Other {
                 cla_type: "file-cla".to_string(),
@@ -947,8 +885,7 @@ async fn test_file_cla_rejects_dangerous_and_refused_paths() {
             schedule: None,
             aliases: Vec::new(),
         }],
-        ..Default::default()
-    };
+    );
     let err = match HamServer::new(empty_cfg).await {
         Ok(_) => panic!("expected empty outbox rejection"),
         Err(e) => e,
@@ -956,18 +893,9 @@ async fn test_file_cla_rejects_dangerous_and_refused_paths() {
     assert!(err.to_string().contains("empty"), "got: {err}");
 
     // 2. '.' outbox path
-    let dot_cfg = HamConfig {
-        callsign: Some("F4DOT".to_string()),
-        node_id: "dtn://f4dot/".to_string(),
-        storage: StorageConfig {
-            in_memory: true,
-            ..Default::default()
-        },
-        grpc: GrpcConfig {
-            enabled: false,
-            ..Default::default()
-        },
-        clas: vec![ClaConfig {
+    let dot_cfg = file_cla_test_config(
+        "F4DOT",
+        vec![ClaConfig {
             name: "dot-cla".to_string(),
             cla_type: ClaType::Other {
                 cla_type: "file-cla".to_string(),
@@ -977,8 +905,7 @@ async fn test_file_cla_rejects_dangerous_and_refused_paths() {
             schedule: None,
             aliases: Vec::new(),
         }],
-        ..Default::default()
-    };
+    );
     let err = match HamServer::new(dot_cfg).await {
         Ok(_) => panic!("expected '.' outbox rejection"),
         Err(e) => e,
@@ -987,19 +914,9 @@ async fn test_file_cla_rejects_dangerous_and_refused_paths() {
 
     // 3. outbox == station storage.data-dir
     let data_dir = tmp.path().join("station_data");
-    let data_dir_cfg = HamConfig {
-        callsign: Some("F4DATA".to_string()),
-        node_id: "dtn://f4data/".to_string(),
-        storage: StorageConfig {
-            data_dir: Some(data_dir.clone()),
-            in_memory: false,
-            ..Default::default()
-        },
-        grpc: GrpcConfig {
-            enabled: false,
-            ..Default::default()
-        },
-        clas: vec![ClaConfig {
+    let mut data_dir_cfg = file_cla_test_config(
+        "F4DATA",
+        vec![ClaConfig {
             name: "data-cla".to_string(),
             cla_type: ClaType::Other {
                 cla_type: "file-cla".to_string(),
@@ -1009,8 +926,9 @@ async fn test_file_cla_rejects_dangerous_and_refused_paths() {
             schedule: None,
             aliases: Vec::new(),
         }],
-        ..Default::default()
-    };
+    );
+    data_dir_cfg.storage.in_memory = false;
+    data_dir_cfg.storage.data_dir = Some(data_dir);
     let err = match HamServer::new(data_dir_cfg).await {
         Ok(_) => panic!("expected data-dir outbox rejection"),
         Err(e) => e,
@@ -1020,18 +938,9 @@ async fn test_file_cla_rejects_dangerous_and_refused_paths() {
     // 4. Second CLA watching <first_outbox>/refused
     let first_out = tmp.path().join("first_out");
     let refused_out = first_out.join("refused");
-    let refused_cfg = HamConfig {
-        callsign: Some("F4REF".to_string()),
-        node_id: "dtn://f4ref/".to_string(),
-        storage: StorageConfig {
-            in_memory: true,
-            ..Default::default()
-        },
-        grpc: GrpcConfig {
-            enabled: false,
-            ..Default::default()
-        },
-        clas: vec![
+    let refused_cfg = file_cla_test_config(
+        "F4REF",
+        vec![
             ClaConfig {
                 name: "first-cla".to_string(),
                 cla_type: ClaType::Other {
@@ -1053,11 +962,66 @@ async fn test_file_cla_rejects_dangerous_and_refused_paths() {
                 aliases: Vec::new(),
             },
         ],
-        ..Default::default()
-    };
+    );
     let err = match HamServer::new(refused_cfg).await {
         Ok(_) => panic!("expected refused/ quarantine overlap rejection"),
         Err(e) => e,
     };
     assert!(err.to_string().contains("refused/"), "got: {err}");
+}
+
+#[tokio::test]
+async fn test_file_cla_toml_hamconfig_load_with_dtn_and_ipn_peers() {
+    let tmp = tempdir().expect("tempdir");
+    let outbox = tmp.path().join("toml_outbox");
+    let dtn_inbox = tmp.path().join("toml_dtn_inbox");
+    let ipn_inbox = tmp.path().join("toml_ipn_inbox");
+
+    let toml_str = format!(
+        r#"
+callsign = "F4TOML"
+node-id = "dtn://f4toml/"
+
+[storage]
+in-memory = true
+
+[grpc]
+enabled = false
+
+[[clas]]
+name = "file-toml"
+type = "file-cla"
+aliases = ["USB"]
+max-bundle-size = "1MB"
+outbox = "{}"
+
+[clas.peers]
+"dtn://f4usb/" = "{}"
+"ipn:42.0" = "{}"
+"#,
+        outbox.display(),
+        dtn_inbox.display(),
+        ipn_inbox.display(),
+    );
+
+    let cfg_path = tmp.path().join("dtnpm.toml");
+    std::fs::write(&cfg_path, toml_str).expect("write dtnpm.toml");
+
+    let config = HamConfig::load(Some(&cfg_path)).expect("load TOML config");
+    assert_eq!(config.clas.len(), 1);
+    assert_eq!(config.clas[0].effective_aliases(), vec!["FILE", "USB"]);
+
+    let server = HamServer::new(config).await.expect("server starts");
+    server.bpa().start(false).await;
+    tokio::time::sleep(Duration::from_millis(150)).await;
+
+    let raw = build_bundle("dtn://f4src/app", "ipn:42.1", b"hello-ipn-toml", None);
+    std::fs::write(outbox.join("to_ipn.bpv7"), raw).expect("write outbox bundle");
+
+    let inbox_files = wait_for_file_count(&ipn_inbox, 1, Duration::from_secs(8)).await;
+    assert_eq!(inbox_files.len(), 1);
+    assert_eq!(extract_payload_bytes(&inbox_files[0]), b"hello-ipn-toml");
+    assert!(list_regular_files(&dtn_inbox).is_empty());
+
+    server.shutdown().await;
 }
