@@ -10,7 +10,6 @@ default = ["desktop", "cli"]
 
 node = [
     "dtnpm-core/transport-local",
-    "dep:hardy-echo-service",
     "dep:hardy-localdisk-storage",
     "dep:hardy-sqlite-storage",
 ]
@@ -139,7 +138,6 @@ hardy-eid-patterns = { path = "../../hardy/eid-patterns", features = ["serde", "
 hardy-proto = { path = "../../hardy/proto", features = ["serde"] }
 hardy-tcpclv4 = { path = "../../hardy/tcpclv4", features = ["serde"] }
 
-hardy-echo-service = { path = "../../hardy/echo-service", optional = true }
 hardy-file-cla = { path = "../../hardy/file-cla", features = ["serde"], optional = true }
 hardy-localdisk-storage = { path = "../../hardy/localdisk-storage", optional = true }
 hardy-sqlite-storage = { path = "../../hardy/sqlite-storage", optional = true }

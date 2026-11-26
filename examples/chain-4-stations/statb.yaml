@@ -1,0 +1,16 @@
+callsign: STATB
+node-id: dtn://statb/
+storage:
+  in-memory: true
+grpc:
+  enabled: true
+  address: 127.0.0.1:35052
+web:
+  address: 127.0.0.1:38082
+clas:
+  - name: tcpcl-statb
+    type: tcpclv4
+    address: 127.0.0.1:34552
+    require-tls: false
+    peers:
+      - 127.0.0.1:34553

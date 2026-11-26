@@ -1,0 +1,16 @@
+callsign: STATC
+node-id: dtn://statc/
+storage:
+  in-memory: true
+grpc:
+  enabled: true
+  address: 127.0.0.1:35053
+web:
+  address: 127.0.0.1:38083
+clas:
+  - name: tcpcl-statc
+    type: tcpclv4
+    address: 127.0.0.1:34553
+    require-tls: false
+    peers:
+      - 127.0.0.1:34554

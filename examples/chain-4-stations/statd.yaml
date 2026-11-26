@@ -1,0 +1,14 @@
+callsign: STATD
+node-id: dtn://statd/
+storage:
+  in-memory: true
+grpc:
+  enabled: true
+  address: 127.0.0.1:35054
+web:
+  address: 127.0.0.1:38084
+clas:
+  - name: tcpcl-statd
+    type: tcpclv4
+    address: 127.0.0.1:34554
+    require-tls: false

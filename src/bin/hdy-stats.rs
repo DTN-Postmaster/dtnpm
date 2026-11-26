@@ -347,12 +347,35 @@ impl BpaService for StatsApp {
         };
 
         let response_text = report.to_text();
-        let source_eid = self.endpoint.get().cloned().unwrap_or(Eid::Null);
+        let source_eid = self
+            .endpoint
+            .get()
+            .cloned()
+            .unwrap_or_else(|| request_bundle.primary.destination.clone());
+        let reply_matches_source_node = NodeId::try_from(reply_dest.clone()).ok().is_some()
+            && NodeId::try_from(reply_dest.clone()).ok()
+                == NodeId::try_from(request_bundle.primary.id.source.clone()).ok();
 
-        let build_res = Builder::new(source_eid, reply_dest.clone())
+        let mut builder = Builder::new(source_eid.clone(), reply_dest.clone())
             .with_payload(response_text.into_bytes().into())
-            .with_lifetime(std::time::Duration::from_secs(3600)) // 1 hour lifetime
-            .build(CreationTimestamp::now());
+            .with_lifetime(std::time::Duration::from_secs(3600)); // 1 hour lifetime
+
+        if reply_matches_source_node {
+            let reply_routing = dtnpm_core::mesh_blocks::derive_reply_routing(
+                &request_bundle,
+                &parsed.data,
+                &source_eid,
+            );
+            match dtnpm_core::mesh_blocks::apply_reply_routing(builder, &reply_routing) {
+                Ok(b) => builder = b,
+                Err(e) => {
+                    eprintln!("Failed to attach reply routing: {e}");
+                    return Ok(());
+                }
+            }
+        }
+
+        let build_res = builder.build(CreationTimestamp::now());
 
         let (_resp_bundle, binbundle) = match build_res {
             Ok(val) => val,

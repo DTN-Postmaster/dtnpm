@@ -682,8 +682,8 @@ impl HamServer {
         info!("Starting DTN Postmaster (dtnpm) BPA server");
         self.bpa.start(true).await;
 
-        // Register permanent built-in Echo service
-        let echo_service = Arc::new(hardy_echo_service::EchoService::new());
+        // Register permanent built-in Echo service (with automatic traceback return routing)
+        let echo_service = Arc::new(crate::echo::DtnpmEchoService::new());
         let echo_service_id = hardy_bpv7::eid::Service::Dtn("echo".into());
         match self
             .service_tracker

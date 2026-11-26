@@ -49,10 +49,19 @@ fi
 FORTUNE_MSG=$(fortune "${FORTUNE_DB}")
 
 # Send the response back to the sender
-# Using -s to specify sender name, and -r to specify receiver EID
+# Using -s to specify sender name, -r to specify receiver EID,
+# and DTN_RETURN_PATH / DTN_GRPC_PORT exported by dtntrigger for route-free replies
+DTNSEND_ARGS=(-s fortune -r "$SOURCE_EID")
+if [ -n "${DTN_GRPC_PORT:-}" ]; then
+    DTNSEND_ARGS+=(-p "$DTN_GRPC_PORT")
+fi
+if [ -n "${DTN_RETURN_PATH:-}" ]; then
+    DTNSEND_ARGS+=(--aprs-path "$DTN_RETURN_PATH")
+fi
+
 if [[ "$DTNSEND_BIN" == "cargo run"* ]]; then
     # Run cargo command from the repository root
-    (cd "${SCRIPT_DIR}/.." && echo "$FORTUNE_MSG" | $DTNSEND_BIN -s fortune -r "$SOURCE_EID")
+    (cd "${SCRIPT_DIR}/.." && echo "$FORTUNE_MSG" | $DTNSEND_BIN "${DTNSEND_ARGS[@]}")
 else
-    echo "$FORTUNE_MSG" | $DTNSEND_BIN -s fortune -r "$SOURCE_EID"
+    echo "$FORTUNE_MSG" | "$DTNSEND_BIN" "${DTNSEND_ARGS[@]}"
 fi

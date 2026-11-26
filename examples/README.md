@@ -157,11 +157,21 @@ sudo apt install fortune-mod
      echo "fr" | cargo run --release --bin dtnsend -- -s myfortune -r dtn://<target-node>/fortune
      ```
 
+   - **Route-free multi-hop query (Spray-and-Wait or APRS with automatic TREB traceback)**:
+     `dtntrigger` exports `DTN_RETURN_PATH` (reversed TREB/APRS/previous-node path), `DTN_TREB_TRACE`, and `DTN_GRPC_PORT` to the trigger script, so `dtn-fortune.sh` automatically passes `--aprs-path "$DTN_RETURN_PATH"` back to `dtnsend`:
+     ```bash
+     echo "fr" | cargo run --release --bin dtnsend -- -s myfortune -r dtn://statd/fortune --spray-quota 8
+     ```
+
 5. The client `dtnprint` listener will display the returned fortune:
    ```text
    From: dtn://<target-node>/fortune
    In DTN, the fastest route is patience.
    ```
+
+## 4-Station Route-Free Chain (`chain-4-stations/`)
+
+The [`chain-4-stations/`](./chain-4-stations/) directory contains 4 route-free station configs (`STATA <-> STATB <-> STATC <-> STATD`, zero `routes:` entries) and [`run_chain_4_ping.sh`](./chain-4-stations/run_chain_4_ping.sh) to verify end-to-end `dtnping` replies via both `--spray-quota 8` and `--aprs-path` with automatic TREB traceback.
 
 ## Ecowitt Weather Station SenML Collector (`dtn-ecowitt.py`)
 

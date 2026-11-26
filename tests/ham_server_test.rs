@@ -294,7 +294,7 @@ async fn test_ham_web_api_routes() {
     assert_eq!(svcs.len(), 0);
 
     // Register a service via service_tracker
-    let echo = std::sync::Arc::new(hardy_echo_service::EchoService::new());
+    let echo = std::sync::Arc::new(dtnpm::echo::DtnpmEchoService::new());
     let service_id = hardy_bpv7::eid::Service::Dtn("echo".into());
     let reg_eid = service_tracker
         .register_service_with_type(service_id, echo, "Built-in Echo")

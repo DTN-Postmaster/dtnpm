@@ -34,7 +34,9 @@ struct Args {
     #[arg(long)]
     print: bool,
 
-    /// Command to execute for incoming bundles, param1 = source, param2 = payload file
+    /// Command to execute for incoming bundles, param1 = source, param2 = payload file.
+    /// Also exports DTN_SOURCE, DTN_DESTINATION, DTN_PAYLOAD_FILE, DTN_RETURN_PATH,
+    /// DTN_TREB_TRACE, DTN_APRS_PATH, DTN_SPRAY_QUOTA, DTN_GRPC_PORT, and DTN_HDY_SOCKET.
     #[arg(short, long, default_value = "echo")]
     command: String,
 
@@ -59,7 +61,7 @@ struct Args {
     token: Option<String>,
 
     /// Path to a file containing the Bearer authentication token (0600 recommended)
-    #[arg(long = "token-file", value_name = "FILE")]
+    #[arg(long = "token-file", value_name = "FILE", env = "DTN_HDY_TOKEN_FILE")]
     token_file: Option<std::path::PathBuf>,
 
     /// Optional Unix Domain Socket path for connecting to a protected local BPA
@@ -69,6 +71,10 @@ struct Args {
 
 struct TriggerApp {
     sink: OnceCell<Box<dyn ServiceSink>>,
+    local_eid: OnceCell<Eid>,
+    grpc_port: String,
+    socket: Option<String>,
+    token_file: Option<String>,
     verbose: bool,
     print: bool,
     command: String,
@@ -76,6 +82,65 @@ struct TriggerApp {
     policy: VerifyPolicy,
     shutting_down: std::sync::atomic::AtomicBool,
     exec_semaphore: Arc<tokio::sync::Semaphore>,
+}
+
+#[derive(Debug, Default)]
+struct TriggerEnv {
+    destination: String,
+    return_path: Option<String>,
+    treb_trace: Option<String>,
+    aprs_path: Option<String>,
+    spray_quota: Option<u32>,
+    grpc_port: String,
+    socket: Option<String>,
+    token_file: Option<String>,
+}
+
+fn extract_trigger_env(
+    bundle: &hardy_bpv7::bundle::Bundle,
+    raw: &[u8],
+    local_eid: &Eid,
+    grpc_port: &str,
+    socket: Option<&str>,
+    token_file: Option<&str>,
+) -> TriggerEnv {
+    let ext = dtnpm_core::mesh_blocks::extract_routing_extensions(bundle, raw);
+    let reply_plan =
+        dtnpm_core::mesh_blocks::derive_reply_routing_from_summary(bundle, raw, &ext, local_eid);
+    let return_path = reply_plan
+        .return_trajectory
+        .as_ref()
+        .map(|traj| dtnpm_core::mesh_blocks::format_aprs_path(&traj.path_elements));
+    let treb_trace = ext.treb.as_ref().and_then(|treb| {
+        if treb.hops.is_empty() {
+            None
+        } else {
+            Some(
+                treb.hops
+                    .iter()
+                    .map(|h| h.node_eid.as_str())
+                    .collect::<Vec<_>>()
+                    .join(","),
+            )
+        }
+    });
+    let spray_quota = ext.spray_permit.or_else(|| {
+        ext.mesh_routing
+            .as_ref()
+            .and_then(|m| m.replication_control.as_ref())
+            .map(|r| r.quota)
+    });
+
+    TriggerEnv {
+        destination: bundle.primary.destination.to_string(),
+        return_path,
+        treb_trace,
+        aprs_path: ext.aprs_path_formatted,
+        spray_quota,
+        grpc_port: grpc_port.to_string(),
+        socket: socket.map(ToString::to_string),
+        token_file: token_file.map(ToString::to_string),
+    }
 }
 
 fn write_temp_file(data: &[u8], verbose: bool) -> anyhow::Result<NamedTempFile> {
@@ -92,6 +157,7 @@ async fn execute_cmd(
     command: &str,
     data_file: NamedTempFile,
     source: &str,
+    env: &TriggerEnv,
     verbose: bool,
 ) -> anyhow::Result<()> {
     let fname_param = format!("{}", data_file.path().display());
@@ -103,6 +169,23 @@ async fn execute_cmd(
     cmd.arg("--"); // placeholder for $0
     cmd.arg(source);
     cmd.arg(&fname_param);
+    cmd.env("DTN_SOURCE", source);
+    cmd.env("DTN_DESTINATION", &env.destination);
+    cmd.env("DTN_PAYLOAD_FILE", &fname_param);
+    cmd.env("DTN_RETURN_PATH", env.return_path.as_deref().unwrap_or(""));
+    cmd.env("DTN_TREB_TRACE", env.treb_trace.as_deref().unwrap_or(""));
+    cmd.env("DTN_APRS_PATH", env.aprs_path.as_deref().unwrap_or(""));
+    cmd.env(
+        "DTN_SPRAY_QUOTA",
+        env.spray_quota.map(|q| q.to_string()).unwrap_or_default(),
+    );
+    cmd.env("DTN_GRPC_PORT", &env.grpc_port);
+    if let Some(ref sock) = env.socket {
+        cmd.env("DTN_HDY_SOCKET", sock);
+    }
+    if let Some(ref tok_file) = env.token_file {
+        cmd.env("DTN_HDY_TOKEN_FILE", tok_file);
+    }
     cmd.kill_on_drop(true);
 
     if verbose {
@@ -133,6 +216,7 @@ impl BpaService for TriggerApp {
                 source
             );
         }
+        let _ = self.local_eid.set(source.clone());
         let _ = self.sink.set(sink);
     }
 
@@ -157,8 +241,21 @@ impl BpaService for TriggerApp {
         stream: &mut dyn hardy_bpa::stream::Receiver<hardy_bpa::stream::Segment>,
     ) -> hardy_bpa::services::Result<()> {
         let data = hardy_bpa::stream::buffer_stream(stream, total_len).await?;
-        let (source, payload) = match hardy_bpv7::parse::parse(data.clone()) {
+        let (source, payload, trigger_env) = match hardy_bpv7::parse::parse(data.clone()) {
             Ok(parsed) => {
+                let local_eid = self
+                    .local_eid
+                    .get()
+                    .cloned()
+                    .unwrap_or_else(|| parsed.bundle.primary.destination.clone());
+                let env = extract_trigger_env(
+                    &parsed.bundle,
+                    &parsed.data,
+                    &local_eid,
+                    &self.grpc_port,
+                    self.socket.as_deref(),
+                    self.token_file.as_deref(),
+                );
                 let payload_bytes = parsed
                     .bundle
                     .blocks
@@ -166,9 +263,18 @@ impl BpaService for TriggerApp {
                     .and_then(|b| b.payload(&parsed.data))
                     .map(|bytes| bytes.to_vec())
                     .unwrap_or_else(|| data.to_vec());
-                (parsed.bundle.primary.id.source, payload_bytes)
+                (parsed.bundle.primary.id.source, payload_bytes, env)
             }
-            Err(_) => (Eid::Null, data.to_vec()),
+            Err(_) => (
+                Eid::Null,
+                data.to_vec(),
+                TriggerEnv {
+                    grpc_port: self.grpc_port.clone(),
+                    socket: self.socket.clone(),
+                    token_file: self.token_file.clone(),
+                    ..Default::default()
+                },
+            ),
         };
 
         if self.policy != VerifyPolicy::Ignore {
@@ -241,7 +347,9 @@ impl BpaService for TriggerApp {
             };
             tokio::spawn(async move {
                 let _permit = permit;
-                if let Err(e) = execute_cmd(&command_str, data_file, &source_str, verbose).await {
+                if let Err(e) =
+                    execute_cmd(&command_str, data_file, &source_str, &trigger_env, verbose).await
+                {
                     eprintln!("[!] Error executing command: {}", e);
                 }
             });
@@ -283,6 +391,10 @@ async fn main() -> anyhow::Result<()> {
 
     let policy = args.verify_policy;
 
+    let token_file_env = args
+        .token_file
+        .as_ref()
+        .map(|p| p.to_string_lossy().into_owned());
     let resolved_token = dtnpm::resolve_bearer_token(args.token, args.token_file.as_deref())?;
     let (remote_bpa, _grpc_guard) = dtnpm_core::create_remote_bpa(
         &grpc_addr,
@@ -291,6 +403,10 @@ async fn main() -> anyhow::Result<()> {
     )?;
     let app = Arc::new(TriggerApp {
         sink: OnceCell::new(),
+        local_eid: OnceCell::new(),
+        grpc_port: port.clone(),
+        socket: args.socket.clone(),
+        token_file: token_file_env,
         verbose: args.verbose,
         print: args.print,
         command: args.command,
@@ -351,7 +467,7 @@ mod tests {
     async fn test_execute_cmd_success() -> anyhow::Result<()> {
         let temp = write_temp_file(b"test data", false)?;
         // We will run a command like "true" which exits with 0
-        let status = execute_cmd("true", temp, "dtn://source", false).await;
+        let status = execute_cmd("true", temp, "dtn://source", &TriggerEnv::default(), false).await;
         assert!(status.is_ok());
         Ok(())
     }
@@ -359,8 +475,104 @@ mod tests {
     #[tokio::test]
     async fn test_execute_cmd_with_quotes() -> anyhow::Result<()> {
         let temp = write_temp_file(b"test data", false)?;
-        let status = execute_cmd("echo 'hello world'", temp, "dtn://source", false).await;
+        let status = execute_cmd(
+            "echo 'hello world'",
+            temp,
+            "dtn://source",
+            &TriggerEnv::default(),
+            false,
+        )
+        .await;
         assert!(status.is_ok());
+        Ok(())
+    }
+
+    #[test]
+    fn test_extract_trigger_env_derives_return_path_from_treb() {
+        use dtnpm_core::mesh_blocks::{DEFAULT_BLOCK_TYPE_TREB, TrebData, TrebHopEntry};
+        use hardy_bpv7::block;
+        use hardy_bpv7::builder::Builder;
+        use hardy_bpv7::creation_timestamp::CreationTimestamp;
+
+        let src: Eid = "dtn://stata/client".parse().expect("src");
+        let dst: Eid = "dtn://statd/fortune".parse().expect("dst");
+        let treb = TrebData {
+            hops: vec![
+                TrebHopEntry {
+                    node_eid: "dtn://stata/".to_string(),
+                    arrival_time_ms: Some(1),
+                    departure_time_ms: Some(2),
+                    cla_info: None,
+                },
+                TrebHopEntry {
+                    node_eid: "dtn://statb/".to_string(),
+                    arrival_time_ms: Some(3),
+                    departure_time_ms: Some(4),
+                    cla_info: None,
+                },
+                TrebHopEntry {
+                    node_eid: "dtn://statc/".to_string(),
+                    arrival_time_ms: Some(5),
+                    departure_time_ms: Some(6),
+                    cla_info: None,
+                },
+            ],
+        };
+        let mut b = Builder::new(src, dst.clone()).with_payload(b"en".as_slice().into());
+        b = dtnpm_core::mesh_blocks::apply_routing_extensions(
+            b,
+            Some(10),
+            Some("STATB,STATC"),
+            Some(8),
+        )
+        .expect("ext");
+        b = b
+            .add_extension_block(block::Type::Unrecognised(DEFAULT_BLOCK_TYPE_TREB))
+            .expect("treb")
+            .build(treb.encode_cbor().expect("encode").into_vec().into());
+        let (_bundle, raw) = b.build(CreationTimestamp::now()).expect("build");
+        let parsed = hardy_bpv7::parse::parse(raw.to_vec().into()).expect("parse");
+
+        let env = extract_trigger_env(&parsed.bundle, &parsed.data, &dst, "35054", None, None);
+        assert_eq!(env.destination, "dtn://statd/fortune");
+        assert_eq!(
+            env.return_path.as_deref(),
+            Some("dtn://statc/,dtn://statb/")
+        );
+        assert_eq!(
+            env.treb_trace.as_deref(),
+            Some("dtn://stata/,dtn://statb/,dtn://statc/")
+        );
+        assert_eq!(env.aprs_path.as_deref(), Some("STATB,STATC"));
+        assert_eq!(env.spray_quota, Some(8));
+        assert_eq!(env.grpc_port, "35054");
+    }
+
+    #[tokio::test]
+    async fn test_execute_cmd_exports_return_path_and_port_env() -> anyhow::Result<()> {
+        let temp = write_temp_file(b"hello", false)?;
+        let out_file = NamedTempFile::new()?;
+        let out_path = out_file.path().display().to_string();
+        let env = TriggerEnv {
+            destination: "dtn://statd/fortune".to_string(),
+            return_path: Some("dtn://statc/,dtn://statb/".to_string()),
+            treb_trace: Some("dtn://stata/,dtn://statb/,dtn://statc/".to_string()),
+            aprs_path: Some("STATB,STATC".to_string()),
+            spray_quota: Some(8),
+            grpc_port: "35054".to_string(),
+            socket: Some("/tmp/test.sock".to_string()),
+            token_file: Some("/etc/dtnpm/token.secret".to_string()),
+        };
+        let script = format!(
+            "printf '%s|%s|%s|%s|%s|%s' \"$DTN_SOURCE\" \"$DTN_RETURN_PATH\" \"$DTN_GRPC_PORT\" \"$DTN_SPRAY_QUOTA\" \"$DTN_HDY_SOCKET\" \"$DTN_HDY_TOKEN_FILE\" > '{}'; #",
+            out_path
+        );
+        execute_cmd(&script, temp, "dtn://stata/client", &env, false).await?;
+        let recorded = std::fs::read_to_string(&out_path)?;
+        assert_eq!(
+            recorded,
+            "dtn://stata/client|dtn://statc/,dtn://statb/|35054|8|/tmp/test.sock|/etc/dtnpm/token.secret"
+        );
         Ok(())
     }
 }

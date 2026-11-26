@@ -911,7 +911,6 @@ dependencies = [
  "hardy-bpa",
  "hardy-bpv7",
  "hardy-cbor",
- "hardy-echo-service",
  "hardy-eid-patterns",
  "hardy-file-cla",
  "hardy-localdisk-storage",
@@ -1641,17 +1640,6 @@ dependencies = [
  "num-traits",
  "smallvec",
  "thiserror 2.0.21",
-]
-
-[[package]]
-name = "hardy-echo-service"
-version = "0.2.0"
-dependencies = [
- "hardy-async",
- "hardy-bpa",
- "hardy-bpv7",
- "time",
- "tracing",
 ]
 
 [[package]]

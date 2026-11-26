@@ -62,7 +62,7 @@ struct Args {
     token: Option<String>,
 
     /// Path to a file containing the Bearer authentication token (0600 recommended)
-    #[clap(long = "token-file", value_name = "FILE")]
+    #[clap(long = "token-file", value_name = "FILE", env = "DTN_HDY_TOKEN_FILE")]
     token_file: Option<std::path::PathBuf>,
 
     /// Optional Unix Domain Socket path for connecting to a protected local BPA
@@ -87,6 +87,10 @@ struct Args {
     /// Request BPv7 status reports (receipt, forward, delivery & deletion, with timestamps)
     #[clap(long = "status-reports", visible_alias = "report-status")]
     status_reports: bool,
+
+    /// Attach an empty TREB (Block Type 201) to record the forward hop trace (auto-enabled with --aprs-path or --spray-quota)
+    #[clap(long = "record-route", visible_alias = "treb")]
+    record_route: bool,
 }
 
 fn build_and_sign_bundle(
@@ -101,12 +105,19 @@ fn build_and_sign_bundle(
     if args.status_reports {
         builder = builder.with_flags(dtnpm_core::mesh_blocks::status_report_flags());
     }
-    let builder = dtnpm_core::mesh_blocks::apply_routing_extensions(
+    let mut builder = dtnpm_core::mesh_blocks::apply_routing_extensions(
         builder,
         args.hop_limit,
         args.aprs_path.as_deref(),
         args.spray_quota,
     )?;
+    if dtnpm_core::mesh_blocks::should_auto_seed_treb(
+        args.record_route,
+        args.aprs_path.as_deref(),
+        args.spray_quota,
+    ) {
+        builder = dtnpm_core::mesh_blocks::attach_empty_treb(builder)?;
+    }
 
     let (bundle, binbundle) = builder
         .build(CreationTimestamp::now())
@@ -125,6 +136,11 @@ fn build_and_sign_bundle(
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let args = Args::parse();
+    dtnpm_core::mesh_blocks::validate_routing_extensions(
+        args.hop_limit,
+        args.aprs_path.as_deref(),
+        args.spray_quota,
+    )?;
     let localhost = if args.ipv6 { "[::1]" } else { "127.0.0.1" };
     let port_str = resolve_grpc_port(args.port);
 

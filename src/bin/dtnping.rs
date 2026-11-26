@@ -57,9 +57,28 @@ struct Args {
     #[arg(short, long)]
     quiet: bool,
 
-    /// Hop limit (like IP TTL)
-    #[arg(short = 't', long)]
-    ttl: Option<u64>,
+    /// RFC 9171 Hop Count Block limit (Type 10, 1..=255)
+    #[arg(
+        short = 't',
+        long = "hop-limit",
+        visible_aliases = ["hop-count", "ttl"]
+    )]
+    hop_limit: Option<u8>,
+
+    /// Comma-separated APRS New n-N future path (e.g. 'VHF2-2,TCPCL1-1' or 'F4JXQ-9,ARES2-2,QO100-1-1')
+    #[arg(long = "aprs-path")]
+    aprs_path: Option<String>,
+
+    /// Spray-and-Wait maximum copy quota / permit count (Block Type 194 & Type 200)
+    #[arg(
+        long = "spray-quota",
+        visible_aliases = ["spray-limit", "spray-copies", "max-copies"]
+    )]
+    spray_quota: Option<u32>,
+
+    /// Attach an empty TREB (Block Type 201) to record the forward hop trace (auto-enabled with --aprs-path or --spray-quota)
+    #[arg(long = "record-route", visible_alias = "treb")]
+    record_route: bool,
 
     /// Bundle lifetime in seconds (default: calculated based on count/interval/wait)
     #[arg(long)]
@@ -102,7 +121,7 @@ struct Args {
     token: Option<String>,
 
     /// Path to a file containing the Bearer authentication token (0600 recommended)
-    #[arg(long = "token-file", value_name = "FILE")]
+    #[arg(long = "token-file", value_name = "FILE", env = "DTN_HDY_TOKEN_FILE")]
     token_file: Option<std::path::PathBuf>,
 
     /// Optional Unix Domain Socket path for connecting to a protected local BPA
@@ -181,6 +200,19 @@ impl PingApp {
     }
 }
 
+fn format_treb_trace(treb: &dtnpm_core::mesh_blocks::TrebData) -> Option<String> {
+    if treb.hops.is_empty() {
+        return None;
+    }
+    Some(
+        treb.hops
+            .iter()
+            .map(|h| h.node_eid.as_str())
+            .collect::<Vec<_>>()
+            .join(" -> "),
+    )
+}
+
 #[async_trait]
 impl BpaService for PingApp {
     async fn on_register(&self, source: &Eid, sink: Box<dyn ServiceSink>) {
@@ -207,8 +239,15 @@ impl BpaService for PingApp {
         let receive_time = std::time::Instant::now();
         let data = hardy_bpa::stream::buffer_stream(stream, total_len).await?;
 
-        let (source, payload) = match hardy_bpv7::parse::parse(data.clone()) {
+        let (source, payload, treb_trace) = match hardy_bpv7::parse::parse(data.clone()) {
             Ok(parsed) => {
+                let treb_trace = dtnpm_core::mesh_blocks::extract_routing_extensions(
+                    &parsed.bundle,
+                    &parsed.data,
+                )
+                .treb
+                .as_ref()
+                .and_then(format_treb_trace);
                 let payload_bytes = parsed
                     .bundle
                     .blocks
@@ -216,9 +255,9 @@ impl BpaService for PingApp {
                     .and_then(|b| b.payload(&parsed.data))
                     .map(|bytes| bytes.to_vec())
                     .unwrap_or_else(|| data.to_vec());
-                (parsed.bundle.primary.id.source, payload_bytes)
+                (parsed.bundle.primary.id.source, payload_bytes, treb_trace)
             }
-            Err(_) => (Eid::Null, data.to_vec()),
+            Err(_) => (Eid::Null, data.to_vec(), None),
         };
 
         if self.policy != VerifyPolicy::Ignore {
@@ -315,6 +354,11 @@ impl BpaService for PingApp {
         }
 
         self.print_path(seq_no);
+        if !self.quiet
+            && let Some(ref trace) = treb_trace
+        {
+            println!("  treb: {trace}");
+        }
 
         // Signal response received
         self.semaphore.add_permits(1);
@@ -497,9 +541,53 @@ fn decode_ping_payload(payload: &[u8]) -> Option<u32> {
     Some(seq_no)
 }
 
+fn validate_routing_args(
+    hop_limit: Option<u8>,
+    aprs_path: Option<&str>,
+    spray_quota: Option<u32>,
+) -> anyhow::Result<()> {
+    dtnpm_core::mesh_blocks::validate_routing_extensions(hop_limit, aprs_path, spray_quota)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn build_ping_bundle(
+    source_eid: Eid,
+    destination_eid: Eid,
+    payload_bytes: Vec<u8>,
+    lifetime: std::time::Duration,
+    hop_limit: Option<u8>,
+    aprs_path: Option<&str>,
+    spray_quota: Option<u32>,
+    record_route: bool,
+) -> anyhow::Result<(hardy_bpv7::bundle::Bundle, Box<[u8]>)> {
+    let builder = Builder::new(source_eid, destination_eid)
+        .with_payload(payload_bytes.into())
+        .with_lifetime(lifetime)
+        .with_flags(dtnpm_core::mesh_blocks::status_report_flags());
+    let mut builder = dtnpm_core::mesh_blocks::apply_routing_extensions(
+        builder,
+        hop_limit,
+        aprs_path,
+        spray_quota,
+    )?;
+    if dtnpm_core::mesh_blocks::should_auto_seed_treb(record_route, aprs_path, spray_quota) {
+        builder = dtnpm_core::mesh_blocks::attach_empty_treb(builder)?;
+    }
+    builder
+        .build(CreationTimestamp::now())
+        .map_err(|e| anyhow::anyhow!("Failed to build bundle: {e}"))
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let args = Args::parse();
+
+    if let Err(e) =
+        validate_routing_args(args.hop_limit, args.aprs_path.as_deref(), args.spray_quota)
+    {
+        eprintln!("Invalid routing parameters: {e}");
+        std::process::exit(2);
+    }
 
     // Exit codes matching Linux/BSD ping conventions:
     // Success = 0 (At least one response received)
@@ -679,15 +767,6 @@ async fn main() -> anyhow::Result<()> {
                 let payload_bytes = encode_ping_payload(seq, padding);
                 let payload_len = payload_bytes.len();
 
-                let flags = hardy_bpv7::bundle::Flags {
-                    report_status_time: true,
-                    receipt_report_requested: true,
-                    forward_report_requested: true,
-                    delivery_report_requested: true,
-                    delete_report_requested: true,
-                    ..Default::default()
-                };
-
                 let source_eid = match app.local_eid.get() {
                     Some(eid) => eid.clone(),
                     None => {
@@ -696,15 +775,19 @@ async fn main() -> anyhow::Result<()> {
                         std::process::exit(2);
                     }
                 };
-                let (bundle, binbundle) = match Builder::new(source_eid, destination_eid.clone())
-                    .with_payload(payload_bytes.into())
-                    .with_lifetime(lifetime)
-                    .with_flags(flags)
-                    .build(CreationTimestamp::now())
-                {
+                let (bundle, binbundle) = match build_ping_bundle(
+                    source_eid,
+                    destination_eid.clone(),
+                    payload_bytes,
+                    lifetime,
+                    args.hop_limit,
+                    args.aprs_path.as_deref(),
+                    args.spray_quota,
+                    args.record_route,
+                ) {
                     Ok(res) => res,
                     Err(e) => {
-                        eprintln!("Error: Failed to build bundle: {}", e);
+                        eprintln!("Error: {e}");
                         let _ = sink.unregister().await;
                         std::process::exit(2);
                     }
@@ -888,5 +971,148 @@ mod tests {
         let encoded_padded = encode_ping_payload(12345, 100);
         let decoded_padded = decode_ping_payload(&encoded_padded).unwrap();
         assert_eq!(decoded_padded, 12345);
+    }
+
+    #[test]
+    fn test_cli_routing_args_parity() {
+        let args = Args::try_parse_from([
+            "dtnping",
+            "dtn://node2/echo",
+            "--aprs-path",
+            "VHF2-2,TCPCL1-1",
+            "--hop-limit",
+            "12",
+            "--spray-quota",
+            "8",
+        ])
+        .expect("primary routing flags should parse");
+        assert_eq!(args.aprs_path.as_deref(), Some("VHF2-2,TCPCL1-1"));
+        assert_eq!(args.hop_limit, Some(12));
+        assert_eq!(args.spray_quota, Some(8));
+
+        let hop_count = Args::try_parse_from(["dtnping", "dtn://node2/echo", "--hop-count", "7"])
+            .expect("--hop-count alias should parse");
+        assert_eq!(hop_count.hop_limit, Some(7));
+
+        let short_ttl = Args::try_parse_from(["dtnping", "dtn://node2/echo", "-t", "5"])
+            .expect("-t alias should parse");
+        assert_eq!(short_ttl.hop_limit, Some(5));
+
+        let long_ttl = Args::try_parse_from(["dtnping", "dtn://node2/echo", "--ttl", "9"])
+            .expect("--ttl alias should parse");
+        assert_eq!(long_ttl.hop_limit, Some(9));
+
+        for (flag, val, expected) in [
+            ("--spray-limit", "4", 4),
+            ("--spray-copies", "6", 6),
+            ("--max-copies", "3", 3),
+        ] {
+            let parsed = Args::try_parse_from(["dtnping", "dtn://node2/echo", flag, val])
+                .expect("spray alias should parse");
+            assert_eq!(parsed.spray_quota, Some(expected));
+        }
+
+        let rec_route = Args::try_parse_from(["dtnping", "dtn://node2/echo", "--record-route"])
+            .expect("--record-route should parse");
+        assert!(rec_route.record_route);
+
+        let treb_alias = Args::try_parse_from(["dtnping", "dtn://node2/echo", "--treb"])
+            .expect("--treb alias should parse");
+        assert!(treb_alias.record_route);
+    }
+
+    #[test]
+    fn test_validate_routing_args() {
+        assert!(validate_routing_args(None, None, None).is_ok());
+        assert!(validate_routing_args(Some(12), Some("VHF2-2,TCPCL1-1"), Some(8)).is_ok());
+
+        assert!(validate_routing_args(Some(0), None, None).is_err());
+        assert!(validate_routing_args(None, None, Some(0)).is_err());
+        assert!(validate_routing_args(None, Some("VHF2-0"), None).is_err());
+        assert!(validate_routing_args(None, Some("WIDE2-3"), None).is_err());
+    }
+
+    #[test]
+    fn test_build_ping_bundle_attaches_routing_extensions() {
+        let src: Eid = "dtn://node1/dtnping-1".parse().expect("valid src eid");
+        let dst: Eid = "dtn://node2/echo".parse().expect("valid dst eid");
+        let payload = encode_ping_payload(7, 0);
+
+        let (_bundle, raw) = build_ping_bundle(
+            src,
+            dst,
+            payload,
+            std::time::Duration::from_secs(60),
+            Some(12),
+            Some("VHF2-2,TCPCL1-1"),
+            Some(8),
+            false,
+        )
+        .expect("build ping bundle with routing extensions");
+
+        let parsed = hardy_bpv7::parse::parse(raw.to_vec().into()).expect("parse built bundle");
+        assert_eq!(
+            parsed.bundle.primary.flags,
+            dtnpm_core::mesh_blocks::status_report_flags()
+        );
+
+        let summary =
+            dtnpm_core::mesh_blocks::extract_routing_extensions(&parsed.bundle, &parsed.data);
+        assert_eq!(
+            summary.hop_count,
+            Some(dtnpm_core::mesh_blocks::HopCountInfo {
+                count: 0,
+                limit: 12,
+            })
+        );
+        assert_eq!(summary.spray_permit, Some(8));
+        assert_eq!(
+            summary.aprs_path_formatted.as_deref(),
+            Some("VHF2-2,TCPCL1-1")
+        );
+        assert_eq!(
+            summary.treb,
+            Some(dtnpm_core::mesh_blocks::TrebData::default())
+        );
+        let mesh = summary.mesh_routing.expect("mesh routing block 200");
+        assert_eq!(mesh.replication_control.as_ref().map(|r| r.quota), Some(8));
+        assert_eq!(
+            mesh.trajectory_control
+                .as_ref()
+                .map(|t| t.path_elements.len()),
+            Some(2)
+        );
+    }
+
+    #[test]
+    fn test_format_treb_trace() {
+        use dtnpm_core::mesh_blocks::{TrebData, TrebHopEntry};
+        assert_eq!(format_treb_trace(&TrebData::default()), None);
+        let treb = TrebData {
+            hops: vec![
+                TrebHopEntry {
+                    node_eid: "dtn://statd/".to_string(),
+                    arrival_time_ms: None,
+                    departure_time_ms: None,
+                    cla_info: None,
+                },
+                TrebHopEntry {
+                    node_eid: "dtn://statc/".to_string(),
+                    arrival_time_ms: None,
+                    departure_time_ms: None,
+                    cla_info: None,
+                },
+                TrebHopEntry {
+                    node_eid: "dtn://statb/".to_string(),
+                    arrival_time_ms: None,
+                    departure_time_ms: None,
+                    cla_info: None,
+                },
+            ],
+        };
+        assert_eq!(
+            format_treb_trace(&treb).as_deref(),
+            Some("dtn://statd/ -> dtn://statc/ -> dtn://statb/")
+        );
     }
 }
