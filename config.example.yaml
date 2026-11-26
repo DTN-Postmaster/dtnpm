@@ -85,6 +85,25 @@ clas:
   #     type: "udp"
   #     bind-addr: "0.0.0.0:1113"
 
+  # Example: File-based CLAs (Sneakernet / USB drive / external software bridge)
+  # Multiple instances can target different directories and APRS aliases;
+  # automatic transport tag 'FILE' is added to every file-cla instance.
+  # - name: "file-usb"
+  #   type: "file-cla"
+  #   aliases: ["USB"]
+  #   # External tool / USB copy drops raw BPv7 bundles here -> dtnpm ingests & deletes
+  #   outbox: "~/dtn-spool/usb/outbox"
+  #   # dtnpm writes outgoing bundles for each peer EID into its inbox directory
+  #   peers:
+  #     "dtn://f4usb/": "~/dtn-spool/usb/inbox"
+  #
+  # - name: "file-ext-tool"
+  #   type: "file-cla"
+  #   aliases: ["EXT"]
+  #   outbox: "/var/spool/dtn-ext/outbox"
+  #   peers:
+  #     "dtn://f4ext/": "/var/spool/dtn-ext/inbox"
+
 # Unified OPA/Rego Routing & Built-in ANSRVR Group Service (ADR-0001)
 # --------------------------------------------------------------------
 rego-routing:

@@ -228,4 +228,4 @@ Integrate Hardy's official `hardy-file-cla` crate into `dtn-hdy-ham` to enable e
 - Web UI integration (displaying the file CLA status and the count of dropped/read bundles).
 
 ### Evaluation Status
-> **Recommended**: High relevance for civil defense exercises and emergency networks in disaster areas.
+> **Implemented (`cla-file` feature)**: `hardy-file-cla` is integrated in `dtnpm` (`type: "file-cla"` / `"file"`, multi-instance support, tilde expansion, automatic `FILE` + custom APRS aliases). Future enhancements may add USB hotplug mount detection, atomic `.tmp`→rename writes, and WebUI spool counters.

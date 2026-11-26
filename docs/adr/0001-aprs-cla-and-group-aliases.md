@@ -50,6 +50,7 @@ APRS trajectory aliases in Block Type 200 (`ScopedAlias`) represent **transport 
   - `ltp` → `LTP`
   - `hqfbp` → `HQFBP`
   - `mercury-arq` / `mercury` → `MERCURY`
+  - `file-cla` / `file` → `FILE`
 - **Hop-count decrement (`New n-N Paradigm` only):** `parse_aprs_path` and `ingress.rego` strictly enforce the APRS **New n-N Paradigm** (`1 <= N <= n <= 7`):
   - Standard form `<SCOPE><n>-<N>` (e.g., `VHF2-2`, `10M2-1`, `TCPCL1-1`, `ARES2-2`, `WIDE1-1`).
   - Hyphenated form `<SCOPE>-<n>-<N>` for digit-ending aliases (e.g., `QO100-1-1`, `2G4-2-2`).
@@ -72,7 +73,7 @@ To support amateur-radio group announcements and group-scoped Block 200 routing:
 - **Security, CRA, and IAM constraints (mandatory for Phase 2):**
   - **Source-only self-management:** `J`, `U`, and `K` apply strictly to `bundle.primary.source` (normalized to node EID); third-party subscribe/unsubscribe requests are rejected.
   - **BPSec enforcement:** `/ansrvr` honours the station's `DirectionalKeyStore` / `VerifyPolicy` (`Strict` / `Warn` / `Ignore`).
-  - **Reserved alias namespace:** Built-in transport tags (`TCPCL`, `LTP`, `HQFBP`, `MERCURY`) and configured CLA/band aliases cannot be registered or hijacked as user group names.
+  - **Reserved alias namespace:** Built-in transport tags (`TCPCL`, `LTP`, `HQFBP`, `MERCURY`, `FILE`) and configured CLA/band aliases cannot be registered or hijacked as user group names.
   - **Resource bounds:** Bounded maximum groups (`max-groups`), maximum subscribers per group (`max-members-per-group`), 60s TTL expiration reaper, and per-source rate limiting (`cq-rate-limit-secs`) on `CQ` fan-out.
   - **REST API (`dtnpm-mod-rego-routing`):** `GET /api/rego_routing/v1/groups` and `DELETE /api/rego_routing/v1/groups/{group}?member=<node_eid>`.
 

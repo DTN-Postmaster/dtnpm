@@ -913,6 +913,7 @@ dependencies = [
  "hardy-cbor",
  "hardy-echo-service",
  "hardy-eid-patterns",
+ "hardy-file-cla",
  "hardy-localdisk-storage",
  "hardy-ltp",
  "hardy-proto",
@@ -1663,6 +1664,24 @@ dependencies = [
  "serde",
  "thiserror 2.0.21",
  "winnow 1.0.5",
+]
+
+[[package]]
+name = "hardy-file-cla"
+version = "0.2.0"
+dependencies = [
+ "flume",
+ "hardy-async",
+ "hardy-bpa",
+ "hardy-bpv7",
+ "notify",
+ "notify-debouncer-full",
+ "serde",
+ "thiserror 2.0.21",
+ "tokio",
+ "tokio-util",
+ "trace-err",
+ "tracing",
 ]
 
 [[package]]

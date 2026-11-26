@@ -192,6 +192,14 @@ clas:
       type: udp
       bind-addr: "0.0.0.0:1113"
 
+  # 4. File-based CLA (Sneakernet / USB drive / external software bridge; auto tag 'FILE')
+  # - name: file-usb
+  #   type: file-cla
+  #   aliases: ["USB"]
+  #   outbox: "~/dtn-spool/usb/outbox"
+  #   peers:
+  #     "dtn://f4usb/": "~/dtn-spool/usb/inbox"
+
 # Unified OPA/Rego Routing & Built-in ANSRVR Group Service (ADR-0001)
 rego-routing:
   record-treb: false

@@ -196,8 +196,16 @@ impl HamServer {
         // 4. Configure CLAs
         let mut tcp_peers = Vec::new();
         let mut coordinators = Vec::new();
+        #[cfg(feature = "cla-file")]
+        let mut file_cla_outboxes: std::collections::HashSet<std::path::PathBuf> =
+            std::collections::HashSet::new();
+        #[cfg(feature = "cla-file")]
+        let mut file_cla_inboxes: std::collections::HashSet<std::path::PathBuf> =
+            std::collections::HashSet::new();
         for cla_config in config.clas.clone() {
+            #[cfg(feature = "mod-rego-routing")]
             let cla_aliases = cla_config.effective_aliases();
+            #[cfg_attr(not(feature = "mod-rego-routing"), allow(unused_variables))]
             let (cla, init, cla_type_name): (Arc<dyn Cla>, ClaInit, &'static str) = match cla_config
                 .cla_type
             {
@@ -445,44 +453,156 @@ impl HamServer {
                 }
 
                 #[allow(clippy::match_single_binding)]
-                ClaType::Other { ref cla_type, .. } => match cla_type.as_str() {
-                    #[cfg(feature = "cla-ltp")]
-                    "ltp" => {
-                        let ltp_cfg = cla_config
+                ClaType::Other { ref cla_type, .. } => {
+                    let cla_type_norm = cla_type.trim().to_ascii_lowercase();
+                    match cla_type_norm.as_str() {
+                        #[cfg(feature = "cla-ltp")]
+                        "ltp" => {
+                            let ltp_cfg = cla_config
+                                .cla_type
+                                .parse_as::<dtnpm_cla_ltp_kiss::Config>(cla_type.as_str())
+                                .context("Failed to parse LTP CLA configuration")?
+                                .expect("cla_type verified");
+                            info!(
+                                "Initializing LTP CLA '{}' (Engine ID {})",
+                                cla_config.name, ltp_cfg.engine_id
+                            );
+                            let cla = dtnpm_cla_ltp_kiss::LtpCla::new(ltp_cfg);
+                            let init = cla.cla_init();
+                            let cla: Arc<dyn Cla> = Arc::new(cla);
+                            (cla, init, "ltp")
+                        }
+                        #[cfg(feature = "cla-hqfbp")]
+                        "hqfbp" => {
+                            let hqfbp_cfg = cla_config
+                                .cla_type
+                                .parse_as::<dtnpm_cla_hqfbp_kiss::Config>(cla_type.as_str())
+                                .context("Failed to parse HQFBP CLA configuration")?
+                                .expect("cla_type verified");
+                            info!("Initializing HQFBP CLA '{}'", cla_config.name);
+                            let cla = dtnpm_cla_hqfbp_kiss::HqfbpCla::new(hqfbp_cfg);
+                            let init = cla.cla_init();
+                            let cla: Arc<dyn Cla> = Arc::new(cla);
+                            (cla, init, "hqfbp")
+                        }
+                        #[cfg(feature = "cla-file")]
+                        "file-cla" | "file" => {
+                            if let ClaType::Other {
+                                config: serde_json::Value::Object(ref map),
+                                ..
+                            } = cla_config.cla_type
+                            {
+                                let mut unknown: Vec<&str> = map
+                                    .keys()
+                                    .map(String::as_str)
+                                    .filter(|k| !matches!(*k, "outbox" | "peers"))
+                                    .collect();
+                                if !unknown.is_empty() {
+                                    unknown.sort_unstable();
+                                    anyhow::bail!(
+                                        "File CLA '{}' has unknown configuration field(s): {} (expected only 'outbox' and 'peers')",
+                                        cla_config.name,
+                                        unknown.join(", ")
+                                    );
+                                }
+                            }
+
+                            let mut file_cfg = cla_config
                             .cla_type
-                            .parse_as::<dtnpm_cla_ltp_kiss::Config>("ltp")
-                            .context("Failed to parse LTP CLA configuration")?
-                            .expect("cla_type verified");
-                        info!(
-                            "Initializing LTP CLA '{}' (Engine ID {})",
-                            cla_config.name, ltp_cfg.engine_id
-                        );
-                        let cla = dtnpm_cla_ltp_kiss::LtpCla::new(ltp_cfg);
-                        let init = cla.cla_init();
-                        let cla: Arc<dyn Cla> = Arc::new(cla);
-                        (cla, init, "ltp")
+                            .parse_as::<hardy_file_cla::Config>(cla_type.as_str())
+                            .with_context(|| {
+                                format!(
+                                    "Failed to parse file-cla configuration for CLA '{}'",
+                                    cla_config.name
+                                )
+                            })?
+                            .ok_or_else(|| {
+                                anyhow::anyhow!(
+                                    "CLA '{}' type mismatch while parsing file-cla configuration",
+                                    cla_config.name
+                                )
+                            })?;
+                            if let Some(ref mut outbox) = file_cfg.outbox {
+                                *outbox = dtnpm_core::config::expand_tilde(outbox);
+                            }
+                            for inbox in file_cfg.peers.values_mut() {
+                                *inbox = dtnpm_core::config::expand_tilde(inbox);
+                            }
+                            if file_cfg.outbox.is_none() && file_cfg.peers.is_empty() {
+                                warn!(
+                                    "File CLA '{}' has neither 'outbox' nor 'peers' configured and will remain inert",
+                                    cla_config.name
+                                );
+                            }
+                            info!(
+                                "Initializing File CLA '{}' (outbox={:?}, peers={})",
+                                cla_config.name,
+                                file_cfg.outbox,
+                                file_cfg.peers.len()
+                            );
+                            let cla = hardy_file_cla::Cla::new(&file_cfg).map_err(|e| {
+                                anyhow::anyhow!(
+                                    "Failed to initialize File CLA '{}': {e}",
+                                    cla_config.name
+                                )
+                            })?;
+
+                            // Guard against duplicate outbox watchers and outbox/inbox forwarding loops.
+                            if let Some(ref outbox) = file_cfg.outbox {
+                                let canon_outbox =
+                                    std::fs::canonicalize(outbox).with_context(|| {
+                                        format!(
+                                            "Failed to canonicalize outbox '{}' for File CLA '{}'",
+                                            outbox.display(),
+                                            cla_config.name
+                                        )
+                                    })?;
+                                if file_cla_inboxes.contains(&canon_outbox) {
+                                    anyhow::bail!(
+                                        "File CLA '{}' shares directory '{}' as both outbox and peer inbox (would cause a forwarding loop)",
+                                        cla_config.name,
+                                        canon_outbox.display()
+                                    );
+                                }
+                                if !file_cla_outboxes.insert(canon_outbox.clone()) {
+                                    anyhow::bail!(
+                                        "File CLA '{}' outbox '{}' is already watched by another file-cla instance",
+                                        cla_config.name,
+                                        canon_outbox.display()
+                                    );
+                                }
+                            }
+                            for inbox in file_cfg.peers.values() {
+                                let canon_inbox =
+                                    std::fs::canonicalize(inbox).with_context(|| {
+                                        format!(
+                                            "Failed to canonicalize inbox '{}' for File CLA '{}'",
+                                            inbox.display(),
+                                            cla_config.name
+                                        )
+                                    })?;
+                                if file_cla_outboxes.contains(&canon_inbox) {
+                                    anyhow::bail!(
+                                        "File CLA '{}' shares directory '{}' as both outbox and peer inbox (would cause a forwarding loop)",
+                                        cla_config.name,
+                                        canon_inbox.display()
+                                    );
+                                }
+                                file_cla_inboxes.insert(canon_inbox);
+                            }
+
+                            let cla: Arc<dyn Cla> = Arc::new(cla);
+                            (cla, ClaInit::default(), "file-cla")
+                        }
+                        _ => {
+                            warn!(
+                                "Ignoring CLA '{}' with unsupported or disabled type '{}'",
+                                cla_config.name, cla_type
+                            );
+                            continue;
+                        }
                     }
-                    #[cfg(feature = "cla-hqfbp")]
-                    "hqfbp" => {
-                        let hqfbp_cfg = cla_config
-                            .cla_type
-                            .parse_as::<dtnpm_cla_hqfbp_kiss::Config>("hqfbp")
-                            .context("Failed to parse HQFBP CLA configuration")?
-                            .expect("cla_type verified");
-                        info!("Initializing HQFBP CLA '{}'", cla_config.name);
-                        let cla = dtnpm_cla_hqfbp_kiss::HqfbpCla::new(hqfbp_cfg);
-                        let init = cla.cla_init();
-                        let cla: Arc<dyn Cla> = Arc::new(cla);
-                        (cla, init, "hqfbp")
-                    }
-                    _ => {
-                        warn!(
-                            "Ignoring CLA '{}' with unsupported or disabled type '{}'",
-                            cla_config.name, cla_type
-                        );
-                        continue;
-                    }
-                },
+                }
             };
 
             #[cfg(feature = "mod-rego-routing")]

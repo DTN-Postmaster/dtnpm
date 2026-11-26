@@ -33,6 +33,7 @@ web-core = ["dep:dtnpm-web-core", "dep:axum"]
 cla-ltp = ["node", "dep:dtnpm-cla-ltp-kiss"]
 cla-hqfbp = ["node", "dep:dtnpm-cla-hqfbp-kiss"]
 cla-mercury = ["node", "dep:dtnpm-cla-mercury-arq"]
+cla-file = ["node", "dep:hardy-file-cla"]
 mod-chat = ["web-core", "dep:dtnpm-mod-chat"]
 mod-files = ["web-core", "dep:dtnpm-mod-files"]
 mod-senml = ["web-core", "dep:dtnpm-mod-senml"]
@@ -46,24 +47,26 @@ desktop = [
     "cla-ltp",
     "cla-hqfbp",
     "cla-mercury",
+    "cla-file",
     "mod-chat",
     "mod-files",
     "mod-senml",
     "mod-rego-routing",
 ]
 # 2. Satellite / AMSAT profile (LTP + HQFBP + SenML telemetry)
-amsat = ["node", "web-core", "cla-ltp", "cla-hqfbp", "mod-senml"]
+amsat = ["node", "web-core", "cla-ltp", "cla-hqfbp", "cla-file", "mod-senml"]
 # 3. Headless RF/TCPCL router node (BPA + CLAs + gRPC server, zero web stack)
-node-headless = ["node", "cla-ltp", "cla-hqfbp", "cla-mercury"]
+node-headless = ["node", "cla-ltp", "cla-hqfbp", "cla-mercury", "cla-file"]
 # 4. Remote operator WebUI connecting over gRPC to a headless node
 webui-remote = ["web-core", "mod-chat", "mod-files", "mod-senml", "mod-rego-routing"]
-# 5. Minimal station profile (BPA + TCPCLv4 + CLI utilities + Rego routing/WebUI)
-minimal = ["node", "cli", "mod-rego-routing"]
+# 5. Minimal station profile (BPA + TCPCLv4 + File CLA + CLI utilities + Rego routing/WebUI)
+minimal = ["node", "cli", "cla-file", "mod-rego-routing"]
 
 instrument = [
     "dtnpm-core/instrument",
     "hardy-async/instrument",
     "hardy-bpa/instrument",
+    "hardy-file-cla?/instrument",
     "tracing/attributes",
 ]
 
@@ -137,6 +140,7 @@ hardy-proto = { path = "../../hardy/proto", features = ["serde"] }
 hardy-tcpclv4 = { path = "../../hardy/tcpclv4", features = ["serde"] }
 
 hardy-echo-service = { path = "../../hardy/echo-service", optional = true }
+hardy-file-cla = { path = "../../hardy/file-cla", features = ["serde"], optional = true }
 hardy-localdisk-storage = { path = "../../hardy/localdisk-storage", optional = true }
 hardy-sqlite-storage = { path = "../../hardy/sqlite-storage", optional = true }
 
