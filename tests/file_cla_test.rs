@@ -1077,3 +1077,66 @@ async fn test_file_cla_rejects_non_object_config_payload() {
         "expected error mentioning CLA name and mapping/object, got: {msg}"
     );
 }
+
+#[cfg(unix)]
+#[tokio::test]
+async fn test_file_cla_rejects_permissive_dir_unless_opted_in() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let tmp = tempdir().expect("tempdir");
+    let outbox = tmp.path().join("perm_755_outbox");
+    let inbox = tmp.path().join("perm_755_inbox");
+    std::fs::create_dir_all(&outbox).expect("create outbox");
+    std::fs::create_dir_all(&inbox).expect("create inbox");
+    std::fs::set_permissions(&outbox, std::fs::Permissions::from_mode(0o755))
+        .expect("chmod outbox");
+    std::fs::set_permissions(&inbox, std::fs::Permissions::from_mode(0o755)).expect("chmod inbox");
+
+    let strict_cfg = file_cla_test_config(
+        "F4STRICT",
+        vec![ClaConfig {
+            name: "permissive-usb".to_string(),
+            cla_type: ClaType::Other {
+                cla_type: "file-cla".to_string(),
+                config: json!({
+                    "outbox": outbox,
+                    "peers": { "dtn://f4peer/": inbox }
+                }),
+            },
+            policy: None,
+            schedule: None,
+            aliases: Vec::new(),
+        }],
+    );
+    let err = match HamServer::new(strict_cfg).await {
+        Ok(_) => panic!("expected startup failure on 0755 spool dir without opt-in"),
+        Err(e) => e,
+    };
+    let msg = err.to_string();
+    assert!(
+        msg.contains("0700") && msg.contains("allow-permissive-spool"),
+        "expected chmod 0700 / opt-in error, got: {msg}"
+    );
+
+    let opted_in_cfg = file_cla_test_config(
+        "F4OPTIN",
+        vec![ClaConfig {
+            name: "permissive-usb".to_string(),
+            cla_type: ClaType::Other {
+                cla_type: "file-cla".to_string(),
+                config: json!({
+                    "outbox": outbox,
+                    "peers": { "dtn://f4peer/": inbox },
+                    "allow-permissive-spool": true
+                }),
+            },
+            policy: None,
+            schedule: None,
+            aliases: Vec::new(),
+        }],
+    );
+    let server = HamServer::new(opted_in_cfg)
+        .await
+        .expect("server starts when allow-permissive-spool is true");
+    server.shutdown().await;
+}

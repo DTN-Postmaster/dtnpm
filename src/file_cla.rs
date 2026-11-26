@@ -32,6 +32,20 @@ pub struct FileClaHamConfig {
         deserialize_with = "deserialize_opt_byte_size"
     )]
     pub max_bundle_size: Option<u64>,
+    /// Explicit opt-in allowing existing spool directories with group/world permissions (`mode & 0o077 != 0`).
+    #[serde(default, alias = "allow_permissive_spool")]
+    pub allow_permissive_spool: bool,
+}
+
+/// Parsed and validated `file-cla` configuration ready for provisioning or dry-run checks.
+#[derive(Debug, Clone)]
+pub struct ParsedFileClaConfig {
+    /// Underlying `hardy-file-cla` configuration with tilde-expanded paths.
+    pub hardy_cfg: hardy_file_cla::Config,
+    /// Negotiated maximum bundle size cap enforced on `outbox` ingestion.
+    pub max_bundle_size: Option<NonZeroU64>,
+    /// Whether permissive (`mode & 0o077 != 0`) existing spool directories are allowed with a warning.
+    pub allow_permissive_spool: bool,
 }
 
 fn deserialize_opt_byte_size<'de, D>(deserializer: D) -> Result<Option<u64>, D::Error>
@@ -142,11 +156,8 @@ impl FileClaPathRegistry {
     }
 }
 
-/// Parses and validates a `file-cla` entry into a [`hardy_file_cla::Config`]
-/// and an effective `max_bundle_size` cap.
-pub fn parse_file_cla_config(
-    cla_config: &ClaConfig,
-) -> anyhow::Result<(hardy_file_cla::Config, Option<NonZeroU64>)> {
+/// Parses and validates a `file-cla` entry into a [`ParsedFileClaConfig`].
+pub fn parse_file_cla_config(cla_config: &ClaConfig) -> anyhow::Result<ParsedFileClaConfig> {
     let typed_cfg: FileClaHamConfig = match &cla_config.cla_type {
         ClaType::Other {
             config: serde_json::Value::Object(map),
@@ -251,7 +262,11 @@ pub fn parse_file_cla_config(
         );
     }
 
-    Ok((hardy_file_cla::Config { outbox, peers }, max_bundle_size))
+    Ok(ParsedFileClaConfig {
+        hardy_cfg: hardy_file_cla::Config { outbox, peers },
+        max_bundle_size,
+        allow_permissive_spool: typed_cfg.allow_permissive_spool,
+    })
 }
 
 /// Provisions spool directories (`0700` on Unix), validates path invariants across
@@ -260,7 +275,11 @@ pub(crate) fn init_file_cla(
     cla_config: &ClaConfig,
     registry: &mut FileClaPathRegistry,
 ) -> anyhow::Result<(Arc<dyn Cla>, ClaInit)> {
-    let (file_cfg, max_bundle_size) = parse_file_cla_config(cla_config)?;
+    let parsed = parse_file_cla_config(cla_config)?;
+    let file_cfg = parsed.hardy_cfg;
+    let max_bundle_size = parsed.max_bundle_size;
+    #[cfg_attr(not(unix), allow(unused_variables))]
+    let allow_permissive = parsed.allow_permissive_spool;
 
     // Ensure spool directories exist with 0700 permissions and validate
     // before registering/starting hardy-file-cla; clean up newly created
@@ -276,8 +295,6 @@ pub(crate) fn init_file_cla(
                     cla_config.name
                 )
             })?;
-            #[cfg(unix)]
-            warn_if_permissive_spool_dir(&cla_config.name, "outbox", &canon);
             if registry.inboxes.contains(&canon) {
                 anyhow::bail!(
                     "File CLA '{}' shares directory '{}' as both outbox and peer inbox (would cause a forwarding loop)",
@@ -320,6 +337,8 @@ pub(crate) fn init_file_cla(
                     canon.display()
                 );
             }
+            #[cfg(unix)]
+            check_spool_dir_permissions(&cla_config.name, "outbox", &canon, allow_permissive)?;
             Some(canon)
         } else {
             None
@@ -342,7 +361,7 @@ pub(crate) fn init_file_cla(
                 )
             })?;
             #[cfg(unix)]
-            warn_if_permissive_spool_dir(&cla_config.name, "peer inbox", &canon);
+            check_spool_dir_permissions(&cla_config.name, "peer inbox", &canon, allow_permissive)?;
             if !cla_inboxes.insert(canon.clone()) {
                 anyhow::bail!(
                     "File CLA '{}' maps multiple peers (including '{}') to the same inbox '{}'; each peer in a file-cla must have a distinct inbox directory",
@@ -470,13 +489,27 @@ fn ensure_file_cla_dir(
 }
 
 #[cfg(unix)]
-fn warn_if_permissive_spool_dir(cla_name: &str, role: &str, path: &Path) {
+fn check_spool_dir_permissions(
+    cla_name: &str,
+    role: &str,
+    path: &Path,
+    allow_permissive: bool,
+) -> anyhow::Result<()> {
     use std::os::unix::fs::PermissionsExt;
     if let Ok(meta) = std::fs::metadata(path) {
         let mode = meta.permissions().mode() & 0o777;
         if mode & 0o077 != 0 {
+            if !allow_permissive {
+                anyhow::bail!(
+                    "File CLA '{}' {} '{}' has permissive mode {:04o}; restrict with 'chmod 0700' or explicitly opt in with 'allow-permissive-spool: true'",
+                    cla_name,
+                    role,
+                    path.display(),
+                    mode
+                );
+            }
             warn!(
-                "File CLA '{}' {} '{}' has permissive mode {:04o}; recommend 'chmod 0700' so untrusted local users cannot inject or read bundles",
+                "File CLA '{}' {} '{}' has permissive mode {:04o}; proceeding only because 'allow-permissive-spool: true' is explicitly enabled",
                 cla_name,
                 role,
                 path.display(),
@@ -484,6 +517,7 @@ fn warn_if_permissive_spool_dir(cla_name: &str, role: &str, path: &Path) {
             );
         }
     }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -516,18 +550,29 @@ mod tests {
                 }
             }),
         );
-        let (cfg, cap) = parse_file_cla_config(&cla_str).unwrap();
-        assert_eq!(cap, NonZeroU64::new(16 * 1024 * 1024));
-        assert!(!cfg.outbox.unwrap().to_string_lossy().starts_with("~/"));
-        assert_eq!(cfg.peers.len(), 1);
+        let parsed = parse_file_cla_config(&cla_str).unwrap();
+        assert_eq!(parsed.max_bundle_size, NonZeroU64::new(16 * 1024 * 1024));
+        assert!(
+            !parsed
+                .hardy_cfg
+                .outbox
+                .unwrap()
+                .to_string_lossy()
+                .starts_with("~/")
+        );
+        assert_eq!(parsed.hardy_cfg.peers.len(), 1);
+        assert!(!parsed.allow_permissive_spool);
 
         let cla_int = make_cla("usb-int", json!({ "max_bundle_size": 4096 }));
-        let (_cfg, cap) = parse_file_cla_config(&cla_int).unwrap();
-        assert_eq!(cap, NonZeroU64::new(4096));
+        let parsed = parse_file_cla_config(&cla_int).unwrap();
+        assert_eq!(parsed.max_bundle_size, NonZeroU64::new(4096));
 
         let cla_default = make_cla("usb-def", json!({}));
-        let (_cfg, cap) = parse_file_cla_config(&cla_default).unwrap();
-        assert_eq!(cap, NonZeroU64::new(DEFAULT_FILE_CLA_MAX_BUNDLE_SIZE));
+        let parsed = parse_file_cla_config(&cla_default).unwrap();
+        assert_eq!(
+            parsed.max_bundle_size,
+            NonZeroU64::new(DEFAULT_FILE_CLA_MAX_BUNDLE_SIZE)
+        );
     }
 
     #[test]
