@@ -104,9 +104,9 @@ clas:
   # - name: "file-ext-tool"
   #   type: "file-cla"
   #   aliases: ["EXT"]
-  #   outbox: "/var/spool/dtn-ext/outbox"
+  #   outbox: "/var/lib/dtnpm/spool/ext/outbox"
   #   peers:
-  #     "dtn://f4ext/": "/var/spool/dtn-ext/inbox"
+  #     "dtn://f4ext/": "/var/lib/dtnpm/spool/ext/inbox"
 
 # Unified OPA/Rego Routing & Built-in ANSRVR Group Service (ADR-0001)
 # --------------------------------------------------------------------
