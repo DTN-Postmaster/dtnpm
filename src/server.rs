@@ -1030,14 +1030,13 @@ impl FileClaPathRegistry {
 }
 
 #[cfg(feature = "cla-file")]
-fn init_file_cla(
+fn parse_file_cla_config(
     cla_config: &dtnpm_core::config::cla::ClaConfig,
-    registry: &mut FileClaPathRegistry,
-) -> anyhow::Result<(Arc<dyn Cla>, ClaInit)> {
+) -> anyhow::Result<(hardy_file_cla::Config, Option<std::num::NonZeroU64>)> {
     const DEFAULT_FILE_CLA_MAX_BUNDLE_SIZE: u64 = 64 * 1024 * 1024;
 
     let mut parsed_max_bundle_size: Option<std::num::NonZeroU64> = None;
-    let mut file_cfg_value = match &cla_config.cla_type {
+    let file_cfg_value = match &cla_config.cla_type {
         ClaType::Other {
             config: serde_json::Value::Object(map),
             ..
@@ -1128,8 +1127,8 @@ fn init_file_cla(
     let max_bundle_size = parsed_max_bundle_size
         .or_else(|| std::num::NonZeroU64::new(DEFAULT_FILE_CLA_MAX_BUNDLE_SIZE));
 
-    let mut file_cfg: hardy_file_cla::Config =
-        serde_json::from_value(std::mem::take(&mut file_cfg_value)).with_context(|| {
+    let mut file_cfg: hardy_file_cla::Config = serde_json::from_value(file_cfg_value)
+        .with_context(|| {
             format!(
                 "Failed to parse file-cla configuration for CLA '{}'",
                 cla_config.name
@@ -1181,6 +1180,16 @@ fn init_file_cla(
             cla_config.name
         );
     }
+
+    Ok((file_cfg, max_bundle_size))
+}
+
+#[cfg(feature = "cla-file")]
+fn init_file_cla(
+    cla_config: &dtnpm_core::config::cla::ClaConfig,
+    registry: &mut FileClaPathRegistry,
+) -> anyhow::Result<(Arc<dyn Cla>, ClaInit)> {
+    let (file_cfg, max_bundle_size) = parse_file_cla_config(cla_config)?;
 
     // Ensure spool directories exist with 0700 permissions and validate
     // before registering/starting hardy-file-cla; clean up newly created
@@ -1246,6 +1255,11 @@ fn init_file_cla(
                 None
             };
 
+            let same_cla_refused = canon_outbox.as_ref().map(|o| {
+                let r = o.join("refused");
+                std::fs::canonicalize(&r).unwrap_or(r)
+            });
+
             let mut cla_inboxes = std::collections::HashSet::new();
             let mut validated_inboxes = Vec::with_capacity(file_cfg.peers.len());
             for (peer_eid, inbox) in &file_cfg.peers {
@@ -1275,9 +1289,7 @@ fn init_file_cla(
                     );
                 }
                 if registry.refused_dirs.contains(&canon)
-                    || canon_outbox
-                        .as_ref()
-                        .is_some_and(|o| o.join("refused") == canon)
+                    || same_cla_refused.as_ref() == Some(&canon)
                 {
                     anyhow::bail!(
                         "File CLA '{}' peer inbox '{}' cannot target a file-cla refused/ quarantine directory",
