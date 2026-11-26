@@ -202,6 +202,29 @@ impl HamServer {
         #[cfg(feature = "cla-file")]
         let mut file_cla_inboxes: std::collections::HashSet<std::path::PathBuf> =
             std::collections::HashSet::new();
+        #[cfg(feature = "cla-file")]
+        let mut file_cla_refused_dirs: std::collections::HashSet<std::path::PathBuf> =
+            std::collections::HashSet::new();
+        #[cfg(feature = "cla-file")]
+        let file_cla_protected_dirs: std::collections::HashSet<std::path::PathBuf> = {
+            let mut set = std::collections::HashSet::new();
+            if let Ok(canon) = std::fs::canonicalize(config.storage.effective_data_dir()) {
+                set.insert(canon);
+            }
+            if let Ok(canon) = std::fs::canonicalize(config.storage.effective_payload_dir()) {
+                set.insert(canon);
+            }
+            if let Some(cfg_dir) = config
+                .config_path
+                .as_ref()
+                .and_then(|p| p.parent())
+                .filter(|p| !p.as_os_str().is_empty())
+                && let Ok(canon) = std::fs::canonicalize(cfg_dir)
+            {
+                set.insert(canon);
+            }
+            set
+        };
         for cla_config in config.clas.clone() {
             #[cfg(feature = "mod-rego-routing")]
             let cla_aliases = cla_config.effective_aliases();
@@ -580,6 +603,43 @@ impl HamServer {
                                             cla_config.name
                                         )
                                     })?;
+                            if cla_config.schedule.is_some() {
+                                warn!(
+                                    "File CLA '{}' has 'schedule' configured, which is not supported by file-cla and will be ignored",
+                                    cla_config.name
+                                );
+                            }
+                            if cla_config.policy.is_some() {
+                                warn!(
+                                    "File CLA '{}' has 'policy' configured, which is not supported by file-cla and will be ignored",
+                                    cla_config.name
+                                );
+                            }
+
+                            if let Some(ref outbox) = file_cfg.outbox {
+                                if is_empty_or_whitespace_path(outbox) {
+                                    anyhow::bail!(
+                                        "File CLA '{}' has an empty 'outbox' path",
+                                        cla_config.name
+                                    );
+                                }
+                                if is_dot_cwd_path(outbox) {
+                                    anyhow::bail!(
+                                        "File CLA '{}' outbox cannot be '.' (watching the working directory would quarantine station files into refused/)",
+                                        cla_config.name
+                                    );
+                                }
+                            }
+                            for (peer_eid, inbox) in &file_cfg.peers {
+                                if is_empty_or_whitespace_path(inbox) {
+                                    anyhow::bail!(
+                                        "File CLA '{}' has an empty inbox path for peer '{}'",
+                                        cla_config.name,
+                                        peer_eid
+                                    );
+                                }
+                            }
+
                             if let Some(ref mut outbox) = file_cfg.outbox {
                                 *outbox = dtnpm_core::config::expand_tilde(outbox);
                             }
@@ -634,6 +694,35 @@ impl HamServer {
                                             canon.display()
                                         );
                                     }
+                                    if file_cla_protected_dirs.contains(&canon) {
+                                        anyhow::bail!(
+                                            "File CLA '{}' outbox '{}' cannot point to a station storage or config directory (would quarantine station files into refused/)",
+                                            cla_config.name,
+                                            canon.display()
+                                        );
+                                    }
+                                    if file_cla_refused_dirs.contains(&canon) {
+                                        anyhow::bail!(
+                                            "File CLA '{}' outbox '{}' cannot watch another file-cla's refused/ quarantine directory",
+                                            cla_config.name,
+                                            canon.display()
+                                        );
+                                    }
+                                    let refused_dir = canon.join("refused");
+                                    let canon_refused = std::fs::canonicalize(&refused_dir).ok();
+                                    if file_cla_outboxes.contains(&refused_dir)
+                                        || file_cla_inboxes.contains(&refused_dir)
+                                        || canon_refused.as_ref().is_some_and(|r| {
+                                            file_cla_outboxes.contains(r)
+                                                || file_cla_inboxes.contains(r)
+                                        })
+                                    {
+                                        anyhow::bail!(
+                                            "File CLA '{}' outbox '{}' has a refused/ subdirectory that overlaps another file-cla spool directory",
+                                            cla_config.name,
+                                            canon.display()
+                                        );
+                                    }
                                     Some(canon)
                                 } else {
                                     None
@@ -678,6 +767,17 @@ impl HamServer {
                                             canon.display()
                                         );
                                     }
+                                    if file_cla_refused_dirs.contains(&canon)
+                                        || canon_outbox
+                                            .as_ref()
+                                            .is_some_and(|o| o.join("refused") == canon)
+                                    {
+                                        anyhow::bail!(
+                                            "File CLA '{}' peer inbox '{}' cannot target a file-cla refused/ quarantine directory",
+                                            cla_config.name,
+                                            canon.display()
+                                        );
+                                    }
                                     validated_inboxes.push(canon);
                                 }
                                 Ok((canon_outbox, validated_inboxes))
@@ -711,6 +811,12 @@ impl HamServer {
                             })?;
 
                             if let Some(canon) = canon_outbox {
+                                file_cla_refused_dirs.insert(canon.join("refused"));
+                                if let Ok(canon_refused) =
+                                    std::fs::canonicalize(canon.join("refused"))
+                                {
+                                    file_cla_refused_dirs.insert(canon_refused);
+                                }
                                 file_cla_outboxes.insert(canon);
                             }
                             file_cla_inboxes.extend(validated_inboxes);
@@ -1212,6 +1318,20 @@ impl HamServer {
     pub fn keystore(&self) -> Arc<DirectionalKeyStore> {
         self.keystore.clone()
     }
+}
+
+#[cfg(feature = "cla-file")]
+fn is_empty_or_whitespace_path(path: &std::path::Path) -> bool {
+    path.as_os_str().is_empty() || path.to_str().is_some_and(|s| s.trim().is_empty())
+}
+
+#[cfg(feature = "cla-file")]
+fn is_dot_cwd_path(path: &std::path::Path) -> bool {
+    path == std::path::Path::new(".")
+        || path == std::path::Path::new("./")
+        || path
+            .to_str()
+            .is_some_and(|s| matches!(s.trim(), "." | "./"))
 }
 
 #[cfg(feature = "cla-file")]

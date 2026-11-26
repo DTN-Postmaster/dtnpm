@@ -920,3 +920,144 @@ async fn test_file_cla_creates_spool_dirs_with_0700_permissions() {
         "newly created spool directories should be cleaned up on validation failure"
     );
 }
+
+#[tokio::test]
+async fn test_file_cla_rejects_dangerous_and_refused_paths() {
+    let tmp = tempdir().expect("tempdir");
+
+    // 1. Empty outbox path
+    let empty_cfg = HamConfig {
+        callsign: Some("F4EMPTY".to_string()),
+        node_id: "dtn://f4empty/".to_string(),
+        storage: StorageConfig {
+            in_memory: true,
+            ..Default::default()
+        },
+        grpc: GrpcConfig {
+            enabled: false,
+            ..Default::default()
+        },
+        clas: vec![ClaConfig {
+            name: "empty-cla".to_string(),
+            cla_type: ClaType::Other {
+                cla_type: "file-cla".to_string(),
+                config: json!({ "outbox": "" }),
+            },
+            policy: None,
+            schedule: None,
+            aliases: Vec::new(),
+        }],
+        ..Default::default()
+    };
+    let err = match HamServer::new(empty_cfg).await {
+        Ok(_) => panic!("expected empty outbox rejection"),
+        Err(e) => e,
+    };
+    assert!(err.to_string().contains("empty"), "got: {err}");
+
+    // 2. '.' outbox path
+    let dot_cfg = HamConfig {
+        callsign: Some("F4DOT".to_string()),
+        node_id: "dtn://f4dot/".to_string(),
+        storage: StorageConfig {
+            in_memory: true,
+            ..Default::default()
+        },
+        grpc: GrpcConfig {
+            enabled: false,
+            ..Default::default()
+        },
+        clas: vec![ClaConfig {
+            name: "dot-cla".to_string(),
+            cla_type: ClaType::Other {
+                cla_type: "file-cla".to_string(),
+                config: json!({ "outbox": "." }),
+            },
+            policy: None,
+            schedule: None,
+            aliases: Vec::new(),
+        }],
+        ..Default::default()
+    };
+    let err = match HamServer::new(dot_cfg).await {
+        Ok(_) => panic!("expected '.' outbox rejection"),
+        Err(e) => e,
+    };
+    assert!(err.to_string().contains("'.'"), "got: {err}");
+
+    // 3. outbox == station storage.data-dir
+    let data_dir = tmp.path().join("station_data");
+    let data_dir_cfg = HamConfig {
+        callsign: Some("F4DATA".to_string()),
+        node_id: "dtn://f4data/".to_string(),
+        storage: StorageConfig {
+            data_dir: Some(data_dir.clone()),
+            in_memory: false,
+            ..Default::default()
+        },
+        grpc: GrpcConfig {
+            enabled: false,
+            ..Default::default()
+        },
+        clas: vec![ClaConfig {
+            name: "data-cla".to_string(),
+            cla_type: ClaType::Other {
+                cla_type: "file-cla".to_string(),
+                config: json!({ "outbox": data_dir }),
+            },
+            policy: None,
+            schedule: None,
+            aliases: Vec::new(),
+        }],
+        ..Default::default()
+    };
+    let err = match HamServer::new(data_dir_cfg).await {
+        Ok(_) => panic!("expected data-dir outbox rejection"),
+        Err(e) => e,
+    };
+    assert!(err.to_string().contains("station storage"), "got: {err}");
+
+    // 4. Second CLA watching <first_outbox>/refused
+    let first_out = tmp.path().join("first_out");
+    let refused_out = first_out.join("refused");
+    let refused_cfg = HamConfig {
+        callsign: Some("F4REF".to_string()),
+        node_id: "dtn://f4ref/".to_string(),
+        storage: StorageConfig {
+            in_memory: true,
+            ..Default::default()
+        },
+        grpc: GrpcConfig {
+            enabled: false,
+            ..Default::default()
+        },
+        clas: vec![
+            ClaConfig {
+                name: "first-cla".to_string(),
+                cla_type: ClaType::Other {
+                    cla_type: "file-cla".to_string(),
+                    config: json!({ "outbox": first_out }),
+                },
+                policy: None,
+                schedule: None,
+                aliases: Vec::new(),
+            },
+            ClaConfig {
+                name: "refused-cla".to_string(),
+                cla_type: ClaType::Other {
+                    cla_type: "file-cla".to_string(),
+                    config: json!({ "outbox": refused_out }),
+                },
+                policy: None,
+                schedule: None,
+                aliases: Vec::new(),
+            },
+        ],
+        ..Default::default()
+    };
+    let err = match HamServer::new(refused_cfg).await {
+        Ok(_) => panic!("expected refused/ quarantine overlap rejection"),
+        Err(e) => e,
+    };
+    assert!(err.to_string().contains("refused/"), "got: {err}");
+}
