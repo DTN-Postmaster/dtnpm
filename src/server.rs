@@ -483,9 +483,14 @@ impl HamServer {
                         "ltp" => {
                             let ltp_cfg = cla_config
                                 .cla_type
-                                .parse_as::<dtnpm_cla_ltp_kiss::Config>(cla_type.as_str())
+                                .parse_as::<dtnpm_cla_ltp_kiss::Config>("ltp")
                                 .context("Failed to parse LTP CLA configuration")?
-                                .expect("cla_type verified");
+                                .ok_or_else(|| {
+                                    anyhow::anyhow!(
+                                        "CLA '{}' type mismatch while parsing LTP configuration",
+                                        cla_config.name
+                                    )
+                                })?;
                             info!(
                                 "Initializing LTP CLA '{}' (Engine ID {})",
                                 cla_config.name, ltp_cfg.engine_id
@@ -499,9 +504,14 @@ impl HamServer {
                         "hqfbp" => {
                             let hqfbp_cfg = cla_config
                                 .cla_type
-                                .parse_as::<dtnpm_cla_hqfbp_kiss::Config>(cla_type.as_str())
+                                .parse_as::<dtnpm_cla_hqfbp_kiss::Config>("hqfbp")
                                 .context("Failed to parse HQFBP CLA configuration")?
-                                .expect("cla_type verified");
+                                .ok_or_else(|| {
+                                    anyhow::anyhow!(
+                                        "CLA '{}' type mismatch while parsing HQFBP configuration",
+                                        cla_config.name
+                                    )
+                                })?;
                             info!("Initializing HQFBP CLA '{}'", cla_config.name);
                             let cla = dtnpm_cla_hqfbp_kiss::HqfbpCla::new(hqfbp_cfg);
                             let init = cla.cla_init();
