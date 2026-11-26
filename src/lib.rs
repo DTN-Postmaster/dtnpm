@@ -34,6 +34,8 @@ pub use dtnpm_mod_senml::{
     self as mod_senml, SenmlManager, SenmlModule, SenmlService, SenmlStorage,
 };
 
+#[cfg(feature = "cla-file")]
+pub mod file_cla;
 #[cfg(feature = "node")]
 pub mod server;
 #[cfg(feature = "node")]
