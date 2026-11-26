@@ -1006,14 +1006,19 @@ impl FileClaPathRegistry {
         if let Ok(canon) = std::fs::canonicalize(config.storage.effective_payload_dir()) {
             protected_dirs.insert(canon);
         }
-        if let Some(cfg_dir) = config
-            .config_path
-            .as_ref()
-            .and_then(|p| p.parent())
-            .filter(|p| !p.as_os_str().is_empty())
-            && let Ok(canon) = std::fs::canonicalize(cfg_dir)
+        if let Some(cfg_path) = config.config_path.as_ref()
+            && let Ok(canon_file) = std::fs::canonicalize(cfg_path)
+            && let Some(cfg_dir) = canon_file.parent()
         {
-            protected_dirs.insert(canon);
+            protected_dirs.insert(cfg_dir.to_path_buf());
+        }
+        if let Some(base) = directories::BaseDirs::new()
+            && let Ok(canon_home) = std::fs::canonicalize(base.home_dir())
+        {
+            protected_dirs.insert(canon_home);
+        }
+        if let Ok(canon_root) = std::fs::canonicalize(std::path::Path::new("/")) {
+            protected_dirs.insert(canon_root);
         }
         Self {
             outboxes: std::collections::HashSet::new(),
@@ -1194,7 +1199,7 @@ fn init_file_cla(
                 }
                 if registry.protected_dirs.contains(&canon) {
                     anyhow::bail!(
-                        "File CLA '{}' outbox '{}' cannot point to a station storage or config directory (would quarantine station files into refused/)",
+                        "File CLA '{}' outbox '{}' cannot point to a station storage, config, home, or root directory (would quarantine files into refused/)",
                         cla_config.name,
                         canon.display()
                     );
@@ -1384,6 +1389,33 @@ fn warn_if_permissive_spool_dir(cla_name: &str, role: &str, path: &std::path::Pa
                 path.display(),
                 mode
             );
+        }
+    }
+}
+
+#[cfg(all(test, feature = "cla-file"))]
+mod file_cla_tests {
+    use super::*;
+
+    #[test]
+    fn protected_dirs_include_bare_relative_config_parent_home_and_root() {
+        let cfg = HamConfig {
+            config_path: Some(std::path::PathBuf::from("Cargo.toml")),
+            ..Default::default()
+        };
+        let registry = FileClaPathRegistry::for_config(&cfg);
+        let cwd = std::fs::canonicalize(".").expect("canonicalize cwd");
+        assert!(
+            registry.protected_dirs.contains(&cwd),
+            "expected cwd '{}' from bare relative config_path to be protected",
+            cwd.display()
+        );
+        let root = std::fs::canonicalize("/").expect("canonicalize /");
+        assert!(registry.protected_dirs.contains(&root));
+        if let Some(base) = directories::BaseDirs::new()
+            && let Ok(home) = std::fs::canonicalize(base.home_dir())
+        {
+            assert!(registry.protected_dirs.contains(&home));
         }
     }
 }

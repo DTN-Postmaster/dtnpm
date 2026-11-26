@@ -968,6 +968,31 @@ async fn test_file_cla_rejects_dangerous_and_refused_paths() {
         Err(e) => e,
     };
     assert!(err.to_string().contains("refused/"), "got: {err}");
+
+    // 5. '~' ($HOME) and '/' (root) outbox paths
+    for dangerous in ["~", "/"] {
+        let cfg = file_cla_test_config(
+            "F4DANG",
+            vec![ClaConfig {
+                name: "dangerous-cla".to_string(),
+                cla_type: ClaType::Other {
+                    cla_type: "file-cla".to_string(),
+                    config: json!({ "outbox": dangerous }),
+                },
+                policy: None,
+                schedule: None,
+                aliases: Vec::new(),
+            }],
+        );
+        let err = match HamServer::new(cfg).await {
+            Ok(_) => panic!("expected protected directory rejection for '{dangerous}'"),
+            Err(e) => e,
+        };
+        assert!(
+            err.to_string().contains("refused/"),
+            "expected protected dir error for '{dangerous}', got: {err}"
+        );
+    }
 }
 
 #[tokio::test]
