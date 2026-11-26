@@ -1106,7 +1106,23 @@ fn init_file_cla(
             }
             serde_json::Value::Object(clean_map)
         }
-        _ => serde_json::Value::Object(serde_json::Map::new()),
+        ClaType::Other {
+            config: serde_json::Value::Null,
+            ..
+        } => serde_json::Value::Object(serde_json::Map::new()),
+        ClaType::Other { config: other, .. } => {
+            anyhow::bail!(
+                "File CLA '{}' configuration must be a mapping/object, got {}",
+                cla_config.name,
+                other
+            );
+        }
+        _ => {
+            anyhow::bail!(
+                "CLA '{}' type mismatch while parsing file-cla configuration",
+                cla_config.name
+            );
+        }
     };
 
     let max_bundle_size = parsed_max_bundle_size

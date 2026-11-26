@@ -1050,3 +1050,30 @@ outbox = "{}"
 
     server.shutdown().await;
 }
+
+#[tokio::test]
+async fn test_file_cla_rejects_non_object_config_payload() {
+    let cfg = file_cla_test_config(
+        "F4NONOBJ",
+        vec![ClaConfig {
+            name: "bad-payload".to_string(),
+            cla_type: ClaType::Other {
+                cla_type: "file-cla".to_string(),
+                config: json!(["not", "an", "object"]),
+            },
+            policy: None,
+            schedule: None,
+            aliases: Vec::new(),
+        }],
+    );
+
+    let err = match HamServer::new(cfg).await {
+        Ok(_) => panic!("expected startup failure on non-object file-cla config"),
+        Err(e) => e,
+    };
+    let msg = err.to_string();
+    assert!(
+        msg.contains("bad-payload") && msg.contains("mapping/object"),
+        "expected error mentioning CLA name and mapping/object, got: {msg}"
+    );
+}
