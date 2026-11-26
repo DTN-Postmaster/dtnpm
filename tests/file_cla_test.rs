@@ -1216,3 +1216,99 @@ outbox = "{}"
         .expect("run dtnpm check-config on bad.toml");
     assert!(!bad_out.status.success(), "expected check-config failure");
 }
+
+#[tokio::test]
+async fn test_file_cla_startup_sweep_and_corrupt_bundle_disposal() {
+    let tmp = tempdir().expect("tempdir");
+    let outbox = tmp.path().join("sweep_outbox");
+    let inbox = tmp.path().join("sweep_inbox");
+
+    std::fs::create_dir_all(&outbox).expect("create outbox");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&outbox, std::fs::Permissions::from_mode(0o700))
+            .expect("chmod 0700 outbox");
+    }
+
+    // 1. Pre-populate outbox before HamServer starts to verify startup sweep.
+    let pre_path = outbox.join("00_preexisting.bpv7");
+    let pre_raw = build_bundle("dtn://f4src/app", "dtn://f4peer/chat", b"from-sweep", None);
+    std::fs::write(&pre_path, pre_raw).expect("write pre-existing bundle");
+
+    let cfg = file_cla_test_config(
+        "F4SWEEP",
+        vec![ClaConfig {
+            name: "sweep-usb".to_string(),
+            cla_type: ClaType::Other {
+                cla_type: "file-cla".to_string(),
+                config: json!({
+                    "outbox": outbox,
+                    "peers": {
+                        "dtn://f4peer/": inbox
+                    }
+                }),
+            },
+            policy: None,
+            schedule: None,
+            aliases: Vec::new(),
+        }],
+    );
+
+    let server = HamServer::new(cfg).await.expect("server starts");
+    server.bpa().start(false).await;
+
+    let inbox_files = wait_for_file_count(&inbox, 1, Duration::from_secs(8)).await;
+    assert_eq!(inbox_files.len(), 1);
+    assert_eq!(extract_payload_bytes(&inbox_files[0]), b"from-sweep");
+
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(3);
+    while pre_path.exists() && tokio::time::Instant::now() < deadline {
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    assert!(
+        !pre_path.exists(),
+        "pre-existing outbox file should be deleted after startup sweep"
+    );
+
+    // 2. Drop corrupt non-CBOR bytes: hardy-bpa treats invalid complete bundles as
+    //    Disposed/Accepted (removes from outbox without forwarding to inbox).
+    let corrupt_path = outbox.join("bad_cbor.bpv7");
+    std::fs::write(&corrupt_path, b"not-valid-cbor-bundle-bytes").expect("write corrupt file");
+
+    let c_deadline = tokio::time::Instant::now() + Duration::from_secs(8);
+    while corrupt_path.exists() && tokio::time::Instant::now() < c_deadline {
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    assert!(
+        !corrupt_path.exists(),
+        "corrupt bundle should be disposed from outbox"
+    );
+    assert_eq!(
+        list_regular_files(&inbox).len(),
+        1,
+        "corrupt bundle must not be forwarded to inbox"
+    );
+
+    // 3. Verify the watcher and BPA remain healthy and forward a subsequent valid bundle.
+    let follow_raw = build_bundle(
+        "dtn://f4src/app",
+        "dtn://f4peer/chat",
+        b"after-corrupt",
+        None,
+    );
+    std::fs::write(outbox.join("02_after_corrupt.bpv7"), follow_raw)
+        .expect("write follow-up valid bundle");
+    let inbox_files = wait_for_file_count(&inbox, 2, Duration::from_secs(8)).await;
+    let mut payloads: Vec<Vec<u8>> = inbox_files
+        .iter()
+        .map(|p| extract_payload_bytes(p))
+        .collect();
+    payloads.sort();
+    assert_eq!(
+        payloads,
+        vec![b"after-corrupt".to_vec(), b"from-sweep".to_vec()]
+    );
+
+    server.shutdown().await;
+}
